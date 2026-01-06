@@ -452,18 +452,18 @@ JS_SELECT_IMAGE_MODE = '''
 '''
 
 # JS để chọn "Tạo video từ các thành phần" từ dropdown (cho I2V)
+# Giống hệt JS_SELECT_IMAGE_MODE nhưng tìm text khác
 JS_SELECT_VIDEO_MODE = '''
 (async function() {
-    // 1. Click dropdown để mở menu
+    // 1. Click dropdown
     var dropdown = document.querySelector('button[role="combobox"]');
     if (!dropdown) {
         console.log('[VIDEO] Dropdown not found');
         return 'NO_DROPDOWN';
     }
 
-    // Kiểm tra xem đã ở mode video chưa
+    // Check đã ở video mode chưa
     var currentText = dropdown.textContent || '';
-    console.log('[VIDEO] Current mode:', currentText);
     if (currentText.includes('Tạo video từ các thành phần') || currentText.includes('Create video from')) {
         console.log('[VIDEO] Already in video mode');
         return 'ALREADY_VIDEO_MODE';
@@ -473,56 +473,22 @@ JS_SELECT_VIDEO_MODE = '''
     console.log('[VIDEO] Clicked dropdown');
 
     // 2. Đợi dropdown mở
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 500));
 
-    // 3. Tìm và click "Tạo video từ các thành phần" - EXACT MATCH trước
+    // 3. Tìm và click "Tạo video từ các thành phần" (EXACT MATCH)
     var allElements = document.querySelectorAll('*');
-    var foundElement = null;
-
-    // Pass 1: Tìm exact match "Tạo video từ các thành phần"
     for (var el of allElements) {
-        var text = (el.textContent || '').trim();
+        var text = el.textContent || '';
+        // Exact match trước
         if (text === 'Tạo video từ các thành phần' || text === 'Create video from components') {
             var rect = el.getBoundingClientRect();
-            if (rect.height > 5 && rect.height < 100 && rect.width > 30) {
-                foundElement = el;
-                console.log('[VIDEO] Found EXACT match:', text);
-                break;
+            if (rect.height > 10 && rect.height < 80 && rect.width > 50) {
+                el.click();
+                console.log('[VIDEO] Clicked: Tao video tu cac thanh phan');
+                return 'CLICKED';
             }
         }
     }
-
-    // Pass 2: Fallback - tìm partial match (nhưng KHÔNG bao gồm "khung hình")
-    if (!foundElement) {
-        for (var el of allElements) {
-            var text = (el.textContent || '').trim();
-            // Loại trừ "Tạo video từ các khung hình"
-            if (text.includes('khung hình') || text.includes('frame')) continue;
-
-            if (text.includes('Tạo video từ các thành phần') || text.includes('video từ các thành phần') ||
-                text.includes('Create video from component') || text.includes('Generate video from image')) {
-                var rect = el.getBoundingClientRect();
-                if (rect.height > 5 && rect.height < 100 && rect.width > 30) {
-                    foundElement = el;
-                    console.log('[VIDEO] Found partial match:', text.substring(0, 50));
-                    break;
-                }
-            }
-        }
-    }
-
-    if (foundElement) {
-        foundElement.click();
-        console.log('[VIDEO] Clicked: Tao video tu cac thanh phan');
-        return 'CLICKED';
-    }
-
-    console.log('[VIDEO] NOT_FOUND - listing all options:');
-    var options = document.querySelectorAll('[role="option"], [role="menuitem"], li');
-    for (var opt of options) {
-        console.log('[VIDEO] Option:', (opt.textContent || '').substring(0, 50));
-    }
-
     return 'NOT_FOUND';
 })();
 '''
@@ -2449,7 +2415,6 @@ class DrissionFlowAPI:
             self.log("[I2V-Chrome] ✓ Đã ở video mode sẵn")
         else:
             self.log(f"[I2V-Chrome] Không thể chuyển sang video mode: {result}", "WARN")
-            # Thử tiếp dù không click được
 
         # 2. Reset video state
         self.driver.run_js("""
