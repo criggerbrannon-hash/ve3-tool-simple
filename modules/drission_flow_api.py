@@ -912,14 +912,24 @@ class DrissionFlowAPI:
 
             self.log(f"Chrome port: {self.chrome_port}")
 
-            # Thêm arguments cần thiết
-            options.set_argument('--no-sandbox')  # Cần cho cả Windows và Linux
-            options.set_argument('--disable-dev-shm-usage')
-            options.set_argument('--disable-gpu')
-            options.set_argument('--disable-software-rasterizer')
-            options.set_argument('--disable-extensions')
-            options.set_argument('--no-first-run')
-            options.set_argument('--no-default-browser-check')
+            # === CHROME ARGUMENTS ===
+            # Nếu dùng chrome_portable: giữ nguyên như mở bằng tay (ít flags nhất)
+            # Nếu không: thêm các flags cần thiết cho automation
+            if chrome_exe:
+                # Chrome portable - CHỈ thêm flags tối thiểu để automation hoạt động
+                options.set_argument('--no-first-run')
+                options.set_argument('--no-default-browser-check')
+                # KHÔNG disable extensions, gpu, sandbox - giữ nguyên như mở bằng tay
+                self.log("[NATIVE MODE] Chrome portable - giữ nguyên settings gốc")
+            else:
+                # Chrome thường - thêm đầy đủ flags
+                options.set_argument('--no-sandbox')
+                options.set_argument('--disable-dev-shm-usage')
+                options.set_argument('--disable-gpu')
+                options.set_argument('--disable-software-rasterizer')
+                options.set_argument('--disable-extensions')
+                options.set_argument('--no-first-run')
+                options.set_argument('--no-default-browser-check')
 
             # Headless mode - chạy Chrome ẩn
             if self._headless:
