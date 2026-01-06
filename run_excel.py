@@ -1,33 +1,69 @@
 #!/usr/bin/env python3
 """
 VE3 Tool - Voice to Excel (Master Mode)
-Tạo SRT và Excel từ voice file.
+Tự động quét thư mục voice và tạo SRT + Excel.
 
 Usage:
-    python run_excel.py D:\AUTO\voice\AR41-T1\AR41-0029.mp3
-    python run_excel.py D:\AUTO\voice\AR41-T1\  (scan folder)
+    python run_excel.py                     (quét D:\AUTO\voice mặc định)
+    python run_excel.py D:\path\to\voice    (quét thư mục khác)
 
-Output sẽ được tạo trong PROJECTS\{voice_name}\:
-    PROJECTS\AR41-0029\
-    ├── AR41-0029.mp3         (copy từ input)
-    ├── AR41-0029.srt
-    └── AR41-0029_prompts.xlsx
+Cấu trúc input:
+    D:\AUTO\voice\
+    ├── AR47-T1\
+    │   ├── AR47-0028.mp3
+    │   └── AR47-0029.mp3
+    └── AR48-T1\
+        └── AR48-0023.mp3
+
+Output trong PROJECTS\{voice_name}\:
+    PROJECTS\AR47-0028\
+    ├── AR47-0028.mp3
+    ├── AR47-0028.txt (nếu có)
+    ├── AR47-0028.srt
+    └── AR47-0028_prompts.xlsx
 """
 
 import sys
 import os
 import shutil
+import time
 from pathlib import Path
 
 # Add current directory to path
 TOOL_DIR = Path(__file__).parent
 sys.path.insert(0, str(TOOL_DIR))
 
+# Default input folder
+DEFAULT_VOICE_DIR = Path("D:/AUTO/voice")
+
 # Output folder
 PROJECTS_DIR = TOOL_DIR / "PROJECTS"
 
+# Scan interval (seconds)
+SCAN_INTERVAL = 30
 
-def process_voice_to_excel(voice_path: Path):
+
+def is_project_complete(project_dir: Path, name: str) -> bool:
+    """Check if project has Excel with all prompts filled."""
+    excel_path = project_dir / f"{name}_prompts.xlsx"
+
+    if not excel_path.exists():
+        return False
+
+    try:
+        from modules.excel_manager import PromptWorkbook
+        wb = PromptWorkbook(str(excel_path))
+        stats = wb.get_stats()
+        total_scenes = stats.get('total_scenes', 0)
+        scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+
+        # Complete if all scenes have prompts
+        return total_scenes > 0 and scenes_with_prompts >= total_scenes
+    except:
+        return False
+
+
+def process_voice_to_excel(voice_path: Path) -> bool:
     """Process single voice file to Excel."""
     name = voice_path.stem
 
@@ -94,6 +130,9 @@ def process_voice_to_excel(voice_path: Path):
                 return True
             else:
                 print(f"  Excel exists but missing prompts ({scenes_with_prompts}/{total_scenes})")
+                # Delete incomplete Excel to regenerate
+                excel_path.unlink()
+                print(f"  Deleted incomplete Excel, regenerating...")
         except Exception as e:
             print(f"  Warning: {e}")
 
@@ -146,74 +185,109 @@ def process_voice_to_excel(voice_path: Path):
     return True
 
 
-def scan_and_process(folder_path: Path):
-    """Scan folder for voice files and process them."""
+def scan_voice_folder(voice_dir: Path) -> list:
+    """Scan voice folder for mp3 files in subdirectories."""
     voice_extensions = {'.mp3', '.wav', '.m4a', '.flac', '.ogg'}
     voice_files = []
 
-    for f in folder_path.iterdir():
-        if f.is_file() and f.suffix.lower() in voice_extensions:
-            voice_files.append(f)
+    # Scan subdirectories (1 level deep)
+    for subdir in voice_dir.iterdir():
+        if subdir.is_dir():
+            for f in subdir.iterdir():
+                if f.is_file() and f.suffix.lower() in voice_extensions:
+                    voice_files.append(f)
 
-    if not voice_files:
-        print(f"No voice files found in: {folder_path}")
-        return
+    return sorted(voice_files)
 
-    print(f"Found {len(voice_files)} voice file(s) in {folder_path}")
 
-    success = 0
-    failed = 0
+def get_pending_files(voice_files: list) -> list:
+    """Filter voice files that need processing."""
+    pending = []
 
-    for voice_file in sorted(voice_files):
-        if process_voice_to_excel(voice_file):
-            success += 1
+    for voice_path in voice_files:
+        name = voice_path.stem
+        project_dir = PROJECTS_DIR / name
+
+        # Check if project is complete
+        if not is_project_complete(project_dir, name):
+            pending.append(voice_path)
+
+    return pending
+
+
+def run_scan_loop(voice_dir: Path):
+    """Run continuous scan loop."""
+    print(f"\n{'='*60}")
+    print(f"  VE3 TOOL - VOICE TO EXCEL (MASTER MODE)")
+    print(f"{'='*60}")
+    print(f"  Input:  {voice_dir}")
+    print(f"  Output: {PROJECTS_DIR}")
+    print(f"  Scan interval: {SCAN_INTERVAL}s")
+    print(f"{'='*60}")
+
+    cycle = 0
+
+    while True:
+        cycle += 1
+        print(f"\n[CYCLE {cycle}] Scanning {voice_dir}...")
+
+        # Find all voice files
+        voice_files = scan_voice_folder(voice_dir)
+
+        if not voice_files:
+            print(f"  No voice files found in subdirectories")
         else:
-            failed += 1
+            # Filter pending files
+            pending = get_pending_files(voice_files)
 
-    print()
-    print("="*60)
-    print(f"SUMMARY: {success} success, {failed} failed")
-    print(f"Output: {PROJECTS_DIR}")
-    print("="*60)
+            print(f"  Found: {len(voice_files)} total, {len(pending)} pending")
+
+            if pending:
+                # Process pending files
+                success = 0
+                failed = 0
+
+                for voice_path in pending:
+                    try:
+                        if process_voice_to_excel(voice_path):
+                            success += 1
+                        else:
+                            failed += 1
+                    except Exception as e:
+                        print(f"  ❌ Error processing {voice_path.name}: {e}")
+                        failed += 1
+
+                print(f"\n[CYCLE {cycle} DONE] {success} success, {failed} failed")
+            else:
+                print(f"  All projects complete!")
+
+        # Wait before next scan
+        print(f"\n  Waiting {SCAN_INTERVAL}s before next scan... (Ctrl+C to stop)")
+        try:
+            time.sleep(SCAN_INTERVAL)
+        except KeyboardInterrupt:
+            print("\n\nStopped by user.")
+            break
 
 
 def main():
-    print()
-    print("="*60)
-    print("  VE3 TOOL - VOICE TO EXCEL (MASTER MODE)")
-    print("="*60)
-    print(f"  Output: {PROJECTS_DIR}")
-    print()
-
-    if len(sys.argv) < 2:
-        # Interactive mode - ask for path
-        print("Usage: python run_excel.py <voice_file_or_folder>")
-        print()
-        print("Examples:")
-        print("  python run_excel.py D:\\AUTO\\voice\\AR41-T1\\AR41-0029.mp3")
-        print("  python run_excel.py D:\\AUTO\\voice\\AR41-T1\\")
-        print()
-
-        user_input = input("Enter voice file or folder path: ").strip().strip('"')
-        if not user_input:
-            print("No path provided. Exiting.")
-            return
-        input_path = Path(user_input)
+    # Determine voice directory
+    if len(sys.argv) >= 2:
+        voice_dir = Path(sys.argv[1])
     else:
-        input_path = Path(sys.argv[1])
+        voice_dir = DEFAULT_VOICE_DIR
 
-    if not input_path.exists():
-        print(f"[ERROR] Path not found: {input_path}")
+    if not voice_dir.exists():
+        print(f"[ERROR] Voice directory not found: {voice_dir}")
+        print(f"\nUsage: python run_excel.py [voice_folder]")
+        print(f"Default: {DEFAULT_VOICE_DIR}")
         return
 
-    if input_path.is_file():
-        # Single file
-        process_voice_to_excel(input_path)
-    elif input_path.is_dir():
-        # Folder - scan for voice files
-        scan_and_process(input_path)
-    else:
-        print(f"[ERROR] Invalid path: {input_path}")
+    # Ensure PROJECTS directory exists
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Run scan loop
+    run_scan_loop(voice_dir)
 
 
 if __name__ == "__main__":
