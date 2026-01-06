@@ -3009,9 +3009,9 @@ class BrowserFlowGenerator:
         ws_cfg = self.config.get('webshare_proxy', {})
 
         # Tạo DrissionFlowAPI (giống tạo ảnh)
-        self._log("Khởi tạo Chrome...")
+        self._log("Khởi tạo Chrome (hiển thị)...")
         drission_api = DrissionFlowAPI(
-            headless=self.headless,
+            headless=False,  # Chrome hiển thị
             verbose=True,
             log_callback=lambda msg, lvl: self._log(msg, lvl),
             webshare_enabled=ws_cfg.get('enabled', False),
