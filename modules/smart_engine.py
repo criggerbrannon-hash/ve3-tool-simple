@@ -130,6 +130,7 @@ class SmartEngine:
         self.tokens_path = self.config_path.parent / "tokens.json"
 
         self.chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        self.chrome_portable = ""  # Chrome portable đã đăng nhập sẵn
 
         # Assigned profile for parallel processing
         self.assigned_profile = assigned_profile
@@ -226,6 +227,17 @@ class SmartEngine:
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = yaml.safe_load(f) or {}
                 self.verbose_log = settings.get('verbose_log', False)
+
+                # Chrome portable - ưu tiên cao nhất
+                chrome_portable = settings.get('chrome_portable', '')
+                if chrome_portable and Path(chrome_portable).exists():
+                    self.chrome_portable = chrome_portable
+                    self.log(f"[Config] Chrome portable: {chrome_portable}", "INFO")
+
+                # Chrome path fallback
+                chrome_path = settings.get('chrome_path', '')
+                if chrome_path and Path(chrome_path).exists():
+                    self.chrome_path = chrome_path
             except:
                 pass
 
@@ -4010,7 +4022,8 @@ class SmartEngine:
                     headless=True,
                     verbose=False,
                     webshare_enabled=ws_cfg.get('enabled', True),
-                    machine_id=ws_cfg.get('machine_id', 1)
+                    machine_id=ws_cfg.get('machine_id', 1),
+                    chrome_portable=self.chrome_portable
                 )
                 if drission_api.setup():
                     # Lấy token bằng cách trigger một request đơn giản
@@ -4213,7 +4226,8 @@ class SmartEngine:
                     webshare_enabled=use_webshare,
                     worker_id=getattr(self, 'worker_id', 0),  # Giống image gen
                     headless=headless_mode,
-                    machine_id=machine_id  # Máy số mấy - tránh trùng session
+                    machine_id=machine_id,  # Máy số mấy - tránh trùng session
+                    chrome_portable=self.chrome_portable
                 )
                 own_drission = True
 

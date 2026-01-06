@@ -363,6 +363,8 @@ class DrissionFlowAPI:
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
+        # Chrome portable - dùng Chrome đã đăng nhập sẵn
+        chrome_portable: str = "",  # Đường dẫn Chrome portable (VD: C:\KP\KP.exe)
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -371,7 +373,7 @@ class DrissionFlowAPI:
         Khởi tạo DrissionFlowAPI.
 
         Args:
-            profile_dir: Thư mục Chrome profile
+            profile_dir: Thư mục Chrome profile (chỉ dùng khi không có chrome_portable)
             chrome_port: Port cho Chrome debugging (0 = auto-generate unique port)
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
@@ -379,11 +381,13 @@ class DrissionFlowAPI:
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
             headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
             machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session để tránh trùng
+            chrome_portable: Đường dẫn Chrome portable đã đăng nhập sẵn (ưu tiên cao nhất)
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         self._headless = headless  # Lưu setting headless
         self._machine_id = machine_id  # Máy số mấy (1-99)
+        self._chrome_portable = chrome_portable  # Chrome portable path
         # Unique port cho mỗi worker (không random để tránh conflict)
         # Worker 0 → 9222, Worker 1 → 9223, ...
         if chrome_port == 0:
@@ -727,31 +731,48 @@ class DrissionFlowAPI:
         self.log("  DRISSION FLOW API - Setup")
         self.log("=" * 50)
 
-        # 1. Tạo thư mục profile
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
-        self.log(f"Profile: {self.profile_dir}")
-        self.log(f"Chrome port: {self.chrome_port}")
-
-        # 2. Khởi tạo Chrome với proxy
-        self.log("Khởi động Chrome...")
+        # 2. Khởi tạo Chrome
+        self.log("Khoi dong Chrome...")
         try:
             options = ChromiumOptions()
-            options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
 
-            # Tìm và set đường dẫn Chrome
-            import platform
-            if platform.system() == 'Windows':
-                chrome_paths = [
-                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-                ]
-                for chrome_path in chrome_paths:
-                    if os.path.exists(chrome_path):
-                        options.set_browser_path(chrome_path)
-                        self.log(f"  Chrome path: {chrome_path}")
-                        break
+            # === CHROME PORTABLE MODE ===
+            # Nếu có chrome_portable: dùng Chrome đã đăng nhập sẵn
+            if self._chrome_portable and os.path.exists(self._chrome_portable):
+                chrome_dir = Path(self._chrome_portable).parent
+                user_data = chrome_dir / "User Data"
+
+                options.set_browser_path(self._chrome_portable)
+                if user_data.exists():
+                    options.set_user_data_path(str(user_data))
+                    self.log(f"[PORTABLE] Chrome: {self._chrome_portable}")
+                    self.log(f"[PORTABLE] User Data: {user_data}")
+                else:
+                    # Chrome portable có thể dùng default profile
+                    self.log(f"[PORTABLE] Chrome: {self._chrome_portable}")
+                    self.log(f"[PORTABLE] User Data: (default)")
+            else:
+                # === LEGACY MODE: Tạo profile mới ===
+                self.profile_dir.mkdir(parents=True, exist_ok=True)
+                options.set_user_data_path(str(self.profile_dir))
+                self.log(f"Profile: {self.profile_dir}")
+
+                # Tìm và set đường dẫn Chrome
+                import platform
+                if platform.system() == 'Windows':
+                    chrome_paths = [
+                        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                    ]
+                    for chrome_path in chrome_paths:
+                        if os.path.exists(chrome_path):
+                            options.set_browser_path(chrome_path)
+                            self.log(f"  Chrome path: {chrome_path}")
+                            break
+
+            self.log(f"Chrome port: {self.chrome_port}")
 
             # Thêm arguments cần thiết
             options.set_argument('--no-sandbox')  # Cần cho cả Windows và Linux

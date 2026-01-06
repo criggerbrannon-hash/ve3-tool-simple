@@ -4,12 +4,18 @@
 project_root: "./VE3_TOOL"
 
 # ============================================================================
-# CHROME SETTINGS (Cho tự động lấy Bearer Token)
+# CHROME SETTINGS - Dùng Chrome portable đã đăng nhập sẵn
 # ============================================================================
-# Tool sẽ sử dụng Chrome profile của bạn để tự động lấy token
+# Chỉ cần chỉ đường dẫn đến Chrome portable của bạn
+# Chrome này đã đăng nhập Google sẵn, không cần tạo profile mới
 
+# Đường dẫn đến Chrome portable (đã đăng nhập Google)
+# Ví dụ: C:\Users\phuonghoa\Documents\KP\KP.exe
+chrome_portable: ""
+
+# [KHÔNG CẦN SỬA] - Chỉ dùng khi chrome_portable trống
 chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-chrome_profile: "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2"
+chrome_profile: ""
 
 # ============================================================================
 # GOOGLE FLOW API Configuration

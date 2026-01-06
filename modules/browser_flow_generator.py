@@ -3042,6 +3042,9 @@ class BrowserFlowGenerator:
         # Dùng chung setting 'browser_headless' với Selenium mode
         drission_headless = self.config.get('browser_headless', True)
 
+        # Chrome portable - ưu tiên cao nhất
+        chrome_portable = self.config.get('chrome_portable', '')
+
         drission_api = DrissionFlowAPI(
             profile_dir=profile_to_use,
             verbose=self.verbose,
@@ -3049,7 +3052,8 @@ class BrowserFlowGenerator:
             webshare_enabled=use_webshare,
             worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
             headless=drission_headless,  # Chạy Chrome ẩn (default: True)
-            machine_id=machine_id  # Máy số mấy - tránh trùng session giữa các máy
+            machine_id=machine_id,  # Máy số mấy - tránh trùng session giữa các máy
+            chrome_portable=chrome_portable  # Chrome portable đã đăng nhập
         )
 
         self._log("🚀 DrissionPage + Interceptor")
