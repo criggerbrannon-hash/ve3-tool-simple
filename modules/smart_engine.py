@@ -2415,12 +2415,11 @@ class SmartEngine:
         else:
             self.log(f"  Tổng: {len(all_prompts)} prompts")
 
-        # === CHỈ START VIDEO WORKER KHI TẤT CẢ ẢNH ĐÃ XONG ===
-        # Nếu còn ảnh → browser_flow_generator sẽ mở Chrome và dùng I2V cùng session
-        # Nếu hết ảnh → VIDEO worker mở Chrome riêng để tạo video
+        # === KHI TẤT CẢ ẢNH ĐÃ XONG: TẠO VIDEO BẰNG BROWSER_FLOW_GENERATOR ===
+        # Giống hệt như tạo ảnh - mở Chrome, chuyển mode, tạo video
         if not prompts:
-            self.log("[VIDEO] Tất cả ảnh đã xong - start VIDEO worker")
-            self._start_video_worker(proj_dir)
+            self.log("[VIDEO] Tất cả ảnh đã xong - tạo video (giống flow ảnh)...")
+            self._create_videos_like_images(proj_dir, excel_files[0] if excel_files else None)
 
         # === LOAD CACHED MEDIA_NAMES ===
         # Dùng để tạo video từ ảnh mà không cần upload lại
@@ -3955,6 +3954,68 @@ class SmartEngine:
             self.log(f"Load video settings error: {e}", "WARN")
 
         return False
+
+    def _create_videos_like_images(self, proj_dir: Path, excel_path: Path = None):
+        """
+        Tạo video giống hệt flow tạo ảnh - dùng browser_flow_generator.
+        Mở Chrome → Chuyển mode video → Tạo video → Đóng Chrome.
+        """
+        try:
+            # Check video_count setting
+            import yaml
+            settings_path = self.config_dir / "settings.yaml"
+            video_count = 0
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                    video_count_setting = settings.get('video_count', 0)
+                    if video_count_setting == 'full':
+                        video_count = 999999
+                    else:
+                        try:
+                            video_count = int(video_count_setting)
+                        except:
+                            video_count = 0
+
+            if video_count <= 0:
+                self.log("[VIDEO] video_count = 0, skip tạo video")
+                return
+
+            # Import và tạo BrowserFlowGenerator (giống tạo ảnh)
+            from modules.browser_flow_generator import BrowserFlowGenerator
+
+            self.log("[VIDEO] Khởi tạo BrowserFlowGenerator (giống tạo ảnh)...")
+
+            generator = BrowserFlowGenerator(
+                project_path=str(proj_dir),
+                profile_name="default",
+                headless=True,
+                verbose=True,
+                config_path=str(settings_path),
+                worker_id=self.worker_id
+            )
+
+            # Gọi generate_videos - method tạo video riêng (giống generate_images)
+            if hasattr(generator, 'generate_videos_from_excel'):
+                result = generator.generate_videos_from_excel(
+                    excel_path=excel_path,
+                    max_videos=video_count
+                )
+                self.log(f"[VIDEO] Kết quả: {result.get('success', 0)} OK, {result.get('failed', 0)} failed")
+            else:
+                # Fallback: Gọi generate_from_prompts_auto với video_only mode
+                # browser_flow_generator sẽ tự detect và tạo video
+                self.log("[VIDEO] Gọi generate_from_prompts_auto (video mode)...")
+                result = generator.generate_from_prompts_auto(
+                    prompts=[],  # Không có ảnh mới, chỉ tạo video
+                    excel_path=excel_path,
+                    video_only=True  # Flag để chỉ tạo video
+                )
+
+        except Exception as e:
+            self.log(f"[VIDEO] Error: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
 
     def _start_video_worker(self, proj_dir: Path):
         """Start video generation worker thread."""

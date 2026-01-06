@@ -2890,6 +2890,167 @@ class BrowserFlowGenerator:
             "stats": self.stats.copy()
         }
 
+    def generate_videos_from_excel(
+        self,
+        excel_path: Optional[Path] = None,
+        max_videos: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Tạo video từ Excel - GIỐNG HỆT FLOW TẠO ẢNH.
+        Mở Chrome → Chuyển mode video → Tạo video → Đóng Chrome.
+
+        Args:
+            excel_path: Đường dẫn file Excel
+            max_videos: Số video tối đa cần tạo
+
+        Returns:
+            Dict với kết quả {success, failed, stats}
+        """
+        self._log("=" * 60)
+        self._log("TẠO VIDEO TỪ ẢNH (Chrome UI - giống tạo ảnh)")
+        self._log("=" * 60)
+
+        # Reset stats
+        self.stats = {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+
+        # Import DrissionFlowAPI
+        try:
+            from modules.drission_flow_api import DrissionFlowAPI
+        except ImportError as e:
+            return {"success": False, "error": f"Không import được DrissionFlowAPI: {e}"}
+
+        # Load Excel
+        from modules.excel_manager import PromptWorkbook
+        if not excel_path:
+            excel_path = self._find_excel_file()
+        if not excel_path:
+            return {"success": False, "error": "Không tìm thấy file Excel"}
+
+        workbook = PromptWorkbook(excel_path)
+        workbook.load_or_create()
+
+        # Lấy scenes cần tạo video (có media_id, chưa có video)
+        scenes_for_video = []
+        for scene in workbook.get_scenes():
+            scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+            if not scene_id or not scene_id.isdigit():
+                continue
+
+            media_id = getattr(scene, 'media_id', '') or ''
+            video_path = getattr(scene, 'video_path', '') or ''
+            status_vid = getattr(scene, 'status_vid', '') or ''
+
+            if not media_id:
+                continue
+            if video_path or status_vid == 'done':
+                continue
+
+            video_prompt = getattr(scene, 'video_prompt', '') or 'Subtle cinematic motion'
+            scenes_for_video.append({
+                'scene_id': scene_id,
+                'media_id': media_id,
+                'video_prompt': video_prompt
+            })
+
+            if len(scenes_for_video) >= max_videos:
+                break
+
+        if not scenes_for_video:
+            self._log("Không có scene nào cần tạo video")
+            return {"success": True, "message": "No scenes to process"}
+
+        self._log(f"Sẽ tạo {len(scenes_for_video)} video")
+        self.stats["total"] = len(scenes_for_video)
+
+        # Webshare config
+        ws_cfg = self.config.get('webshare_proxy', {})
+
+        # Tạo DrissionFlowAPI (giống tạo ảnh)
+        self._log("Khởi tạo Chrome...")
+        drission_api = DrissionFlowAPI(
+            headless=self.headless,
+            verbose=True,
+            log_callback=lambda msg, lvl: self._log(msg, lvl),
+            webshare_enabled=ws_cfg.get('enabled', False),
+            machine_id=ws_cfg.get('machine_id', 1),
+            worker_id=self.worker_id,
+            chrome_portable=self.config.get('chrome_portable', '')
+        )
+
+        # Setup Chrome (giống tạo ảnh)
+        project_url = self.config.get('flow_project_url', '')
+        if not drission_api.setup(project_url=project_url if project_url else None):
+            return {"success": False, "error": "Không setup được Chrome"}
+
+        self._log("✓ Chrome sẵn sàng - bắt đầu tạo video...")
+
+        # Output folder
+        output_dir = Path(self.project_path) / "img"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Tạo video cho từng scene
+        video_success = 0
+        video_failed = 0
+
+        for i, scene_info in enumerate(scenes_for_video):
+            scene_id = scene_info['scene_id']
+            media_id = scene_info['media_id']
+            video_prompt = scene_info['video_prompt']
+
+            self._log(f"\n[{i+1}/{len(scenes_for_video)}] Scene {scene_id}...")
+
+            try:
+                video_file = output_dir / f"{scene_id}.mp4"
+
+                # Gọi generate_video_chrome (Chrome UI - giống tạo ảnh)
+                success, result_path, error = drission_api.generate_video_chrome(
+                    media_id=media_id,
+                    prompt=video_prompt,
+                    video_model="veo_3_0_r2v_fast_ultra",
+                    save_path=video_file
+                )
+
+                if success:
+                    self._log(f"   ✓ OK: {video_file.name}")
+                    video_success += 1
+                    self.stats["success"] += 1
+
+                    # Update Excel
+                    workbook.update_scene(int(scene_id), video_path=video_file.name, status_vid='done')
+                    workbook.save()
+                else:
+                    self._log(f"   ✗ Failed: {error}", "warn")
+                    video_failed += 1
+                    self.stats["failed"] += 1
+
+            except Exception as e:
+                self._log(f"   ✗ Error: {e}", "error")
+                video_failed += 1
+                self.stats["failed"] += 1
+
+            # Delay giữa các video
+            time.sleep(3)
+
+        # Chuyển lại image mode sau khi xong
+        drission_api.switch_to_image_mode()
+
+        # Close Chrome
+        drission_api.close()
+
+        # Summary
+        self._log("\n" + "=" * 60)
+        self._log("HOÀN THÀNH VIDEO (Chrome UI)")
+        self._log("=" * 60)
+        self._log(f"Tổng: {self.stats['total']}")
+        self._log(f"Thành công: {self.stats['success']}")
+        self._log(f"Thất bại: {self.stats['failed']}")
+
+        return {
+            "success": video_success,
+            "failed": video_failed,
+            "stats": self.stats.copy()
+        }
+
     def generate_from_prompts_api(
         self,
         prompts: List[Dict],
