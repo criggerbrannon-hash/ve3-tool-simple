@@ -228,9 +228,9 @@ class SmartEngine:
                     settings = yaml.safe_load(f) or {}
                 self.verbose_log = settings.get('verbose_log', False)
 
-                # Chrome portable - ưu tiên cao nhất
+                # Chrome portable - ưu tiên cao nhất (KHÔNG check exists)
                 chrome_portable = settings.get('chrome_portable', '')
-                if chrome_portable and Path(chrome_portable).exists():
+                if chrome_portable:
                     self.chrome_portable = chrome_portable
                     self.log(f"[Config] Chrome portable: {chrome_portable}", "INFO")
 

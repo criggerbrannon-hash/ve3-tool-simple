@@ -857,10 +857,11 @@ class DrissionFlowAPI:
             user_data = None
             import platform
 
-            # 1. Ưu tiên chrome_portable từ config
-            if self._chrome_portable and os.path.exists(self._chrome_portable):
+            # 1. Ưu tiên chrome_portable từ config (KHÔNG check exists - để fail nếu sai)
+            if self._chrome_portable:
                 chrome_exe = self._chrome_portable
                 chrome_dir = Path(self._chrome_portable).parent
+                self.log(f"[CHROME] Dùng chrome_portable: {chrome_exe}")
                 # User Data có thể ở: KP/User Data hoặc KP/Data/profile
                 for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
                     if data_path.exists():
