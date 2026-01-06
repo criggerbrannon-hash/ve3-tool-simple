@@ -452,7 +452,6 @@ JS_SELECT_IMAGE_MODE = '''
 '''
 
 # JS để chọn "Tạo video từ các thành phần" từ dropdown (cho I2V)
-# Giống hệt JS_SELECT_IMAGE_MODE nhưng tìm text khác
 JS_SELECT_VIDEO_MODE = '''
 (async function() {
     // 1. Click dropdown
@@ -461,26 +460,18 @@ JS_SELECT_VIDEO_MODE = '''
         console.log('[VIDEO] Dropdown not found');
         return 'NO_DROPDOWN';
     }
-
-    // Check đã ở video mode chưa
-    var currentText = dropdown.textContent || '';
-    if (currentText.includes('Tạo video từ các thành phần') || currentText.includes('Create video from')) {
-        console.log('[VIDEO] Already in video mode');
-        return 'ALREADY_VIDEO_MODE';
-    }
-
     dropdown.click();
     console.log('[VIDEO] Clicked dropdown');
 
     // 2. Đợi dropdown mở
     await new Promise(r => setTimeout(r, 500));
 
-    // 3. Tìm và click "Tạo video từ các thành phần" (EXACT MATCH)
+    // 3. Tìm và click "Tạo video từ các thành phần" (KHÔNG phải "khung hình")
     var allElements = document.querySelectorAll('*');
     for (var el of allElements) {
         var text = el.textContent || '';
-        // Exact match trước
-        if (text === 'Tạo video từ các thành phần' || text === 'Create video from components') {
+        // includes() nhưng LOẠI TRỪ "khung hình"
+        if (text.includes('Tạo video từ các thành phần') && !text.includes('khung hình')) {
             var rect = el.getBoundingClientRect();
             if (rect.height > 10 && rect.height < 80 && rect.width > 50) {
                 el.click();
