@@ -454,35 +454,75 @@ JS_SELECT_IMAGE_MODE = '''
 # JS để chọn "Tạo video từ các thành phần" từ dropdown (cho I2V)
 JS_SELECT_VIDEO_MODE = '''
 (async function() {
-    // 1. Click dropdown
+    // 1. Click dropdown để mở menu
     var dropdown = document.querySelector('button[role="combobox"]');
     if (!dropdown) {
         console.log('[VIDEO] Dropdown not found');
         return 'NO_DROPDOWN';
     }
+
+    // Kiểm tra xem đã ở mode video chưa
+    var currentText = dropdown.textContent || '';
+    console.log('[VIDEO] Current mode:', currentText);
+    if (currentText.includes('Tạo video từ các thành phần') || currentText.includes('Create video from')) {
+        console.log('[VIDEO] Already in video mode');
+        return 'ALREADY_VIDEO_MODE';
+    }
+
     dropdown.click();
     console.log('[VIDEO] Clicked dropdown');
 
     // 2. Đợi dropdown mở
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 800));
 
-    // 3. Tìm và click "Tạo video từ các thành phần"
+    // 3. Tìm và click "Tạo video từ các thành phần" - EXACT MATCH trước
     var allElements = document.querySelectorAll('*');
+    var foundElement = null;
+
+    // Pass 1: Tìm exact match "Tạo video từ các thành phần"
     for (var el of allElements) {
-        var text = el.textContent || '';
-        // Vietnamese: "Tạo video từ các thành phần" hoặc "Tạo video từ hình ảnh"
-        // English: "Create video from components" hoặc "Generate video from image"
-        if (text.includes('Tạo video từ') || text.includes('video từ các thành phần') ||
-            text.includes('Create video from') || text.includes('Generate video from') ||
-            text.includes('Image to video') || text.includes('Ảnh thành video')) {
+        var text = (el.textContent || '').trim();
+        if (text === 'Tạo video từ các thành phần' || text === 'Create video from components') {
             var rect = el.getBoundingClientRect();
-            if (rect.height > 10 && rect.height < 80 && rect.width > 50) {
-                el.click();
-                console.log('[VIDEO] Clicked: Tao video tu cac thanh phan');
-                return 'CLICKED';
+            if (rect.height > 5 && rect.height < 100 && rect.width > 30) {
+                foundElement = el;
+                console.log('[VIDEO] Found EXACT match:', text);
+                break;
             }
         }
     }
+
+    // Pass 2: Fallback - tìm partial match (nhưng KHÔNG bao gồm "khung hình")
+    if (!foundElement) {
+        for (var el of allElements) {
+            var text = (el.textContent || '').trim();
+            // Loại trừ "Tạo video từ các khung hình"
+            if (text.includes('khung hình') || text.includes('frame')) continue;
+
+            if (text.includes('Tạo video từ các thành phần') || text.includes('video từ các thành phần') ||
+                text.includes('Create video from component') || text.includes('Generate video from image')) {
+                var rect = el.getBoundingClientRect();
+                if (rect.height > 5 && rect.height < 100 && rect.width > 30) {
+                    foundElement = el;
+                    console.log('[VIDEO] Found partial match:', text.substring(0, 50));
+                    break;
+                }
+            }
+        }
+    }
+
+    if (foundElement) {
+        foundElement.click();
+        console.log('[VIDEO] Clicked: Tao video tu cac thanh phan');
+        return 'CLICKED';
+    }
+
+    console.log('[VIDEO] NOT_FOUND - listing all options:');
+    var options = document.querySelectorAll('[role="option"], [role="menuitem"], li');
+    for (var opt of options) {
+        console.log('[VIDEO] Option:', (opt.textContent || '').substring(0, 50));
+    }
+
     return 'NOT_FOUND';
 })();
 '''
