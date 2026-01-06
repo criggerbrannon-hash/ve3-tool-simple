@@ -737,29 +737,48 @@ class DrissionFlowAPI:
             options = ChromiumOptions()
             options.set_local_port(self.chrome_port)
 
-            # === CHROME PORTABLE MODE ===
-            # Nếu có chrome_portable: dùng Chrome đã đăng nhập sẵn
+            # === AUTO DETECT CHROME PORTABLE ===
+            # Tự động tìm Chrome portable tại: C:\Users\{username}\Documents\KP\KP.exe
+            chrome_exe = None
+            user_data = None
+            import platform
+
+            # 1. Ưu tiên chrome_portable từ config
             if self._chrome_portable and os.path.exists(self._chrome_portable):
+                chrome_exe = self._chrome_portable
                 chrome_dir = Path(self._chrome_portable).parent
-                user_data = chrome_dir / "User Data"
+                # User Data có thể ở: KP/User Data hoặc KP/Data/profile
+                for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
+                    if data_path.exists():
+                        user_data = data_path
+                        break
 
-                options.set_browser_path(self._chrome_portable)
-                if user_data.exists():
+            # 2. Tự động detect Chrome portable tại Documents\KP\KP.exe
+            if not chrome_exe and platform.system() == 'Windows':
+                home = Path.home()  # C:\Users\{username}
+                kp_chrome = home / "Documents" / "KP" / "KP.exe"
+                if kp_chrome.exists():
+                    chrome_exe = str(kp_chrome)
+                    kp_dir = kp_chrome.parent
+                    # Tìm User Data: KP/Data/profile hoặc KP/User Data
+                    for data_path in [kp_dir / "Data" / "profile", kp_dir / "User Data"]:
+                        if data_path.exists():
+                            user_data = data_path
+                            break
+                    self.log(f"[AUTO] Phat hien Chrome: {chrome_exe}")
+
+            # 3. Dùng Chrome portable nếu tìm thấy
+            if chrome_exe:
+                options.set_browser_path(chrome_exe)
+                if user_data:
                     options.set_user_data_path(str(user_data))
-                    self.log(f"[PORTABLE] Chrome: {self._chrome_portable}")
-                    self.log(f"[PORTABLE] User Data: {user_data}")
+                    self.log(f"[CHROME] {chrome_exe}")
+                    self.log(f"[PROFILE] {user_data}")
                 else:
-                    # Chrome portable có thể dùng default profile
-                    self.log(f"[PORTABLE] Chrome: {self._chrome_portable}")
-                    self.log(f"[PORTABLE] User Data: (default)")
+                    self.log(f"[CHROME] {chrome_exe}")
+                    self.log(f"[PROFILE] (default)")
             else:
-                # === LEGACY MODE: Tạo profile mới ===
-                self.profile_dir.mkdir(parents=True, exist_ok=True)
-                options.set_user_data_path(str(self.profile_dir))
-                self.log(f"Profile: {self.profile_dir}")
-
-                # Tìm và set đường dẫn Chrome
-                import platform
+                # === FALLBACK: Chrome thường ===
                 if platform.system() == 'Windows':
                     chrome_paths = [
                         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -769,8 +788,12 @@ class DrissionFlowAPI:
                     for chrome_path in chrome_paths:
                         if os.path.exists(chrome_path):
                             options.set_browser_path(chrome_path)
-                            self.log(f"  Chrome path: {chrome_path}")
+                            self.log(f"[CHROME] {chrome_path}")
                             break
+                # Tạo profile mới nếu không có chrome portable
+                self.profile_dir.mkdir(parents=True, exist_ok=True)
+                options.set_user_data_path(str(self.profile_dir))
+                self.log(f"[PROFILE] {self.profile_dir}")
 
             self.log(f"Chrome port: {self.chrome_port}")
 
