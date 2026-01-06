@@ -105,8 +105,21 @@ def process_voice_to_excel(voice_path: Path) -> bool:
     else:
         print("[STEP 1] Creating SRT from voice (Whisper)...")
         try:
+            # Load whisper settings from config
+            import yaml
+            whisper_cfg = {}
+            cfg_file = TOOL_DIR / "config" / "settings.yaml"
+            if cfg_file.exists():
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    whisper_cfg = yaml.safe_load(f) or {}
+
+            whisper_model = whisper_cfg.get('whisper_model', 'medium')
+            whisper_lang = whisper_cfg.get('whisper_language', 'en')
+
+            print(f"  Whisper model: {whisper_model}, language: {whisper_lang}")
+
             from modules.voice_to_srt import VoiceToSrt
-            conv = VoiceToSrt(model_name="base", language="vi")
+            conv = VoiceToSrt(model_name=whisper_model, language=whisper_lang)
             conv.transcribe(str(voice_copy), str(srt_path))
             print(f"  ✅ SRT created: {srt_path.name}")
         except Exception as e:
