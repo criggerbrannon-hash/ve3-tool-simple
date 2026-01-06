@@ -2454,14 +2454,15 @@ class DrissionFlowAPI:
         save_path: Optional[Path] = None
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Tạo video từ ảnh (I2V) sử dụng Chrome UI - giống flow tạo ảnh.
+        Tạo video từ ảnh (I2V) sử dụng FORCE MODE.
 
-        Flow:
-        1. Chuyển Chrome sang mode "Tạo video từ các thành phần"
-        2. Inject custom payload với media_id (reference image)
-        3. Chrome gửi request với fresh reCAPTCHA
-        4. Đợi response và poll cho video hoàn thành
-        5. Download video (nếu có save_path)
+        Flow (FORCE MODE - không cần chuyển mode):
+        1. Ở nguyên mode "Tạo hình ảnh"
+        2. Set _forceVideoPayload với video config + media_id
+        3. Gửi prompt như tạo ảnh
+        4. Interceptor convert image request → video request
+        5. Chrome gửi VIDEO request với fresh reCAPTCHA
+        6. Poll và download video
 
         Args:
             media_id: Media ID của ảnh đã tạo (từ generate_image)
@@ -2483,28 +2484,19 @@ class DrissionFlowAPI:
         self.log(f"[I2V-Chrome] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[I2V-Chrome] Prompt: {prompt[:60]}...")
 
-        # 1. Chuyển sang video mode trong Chrome (3 bước với delay)
-        self.log("[I2V-Chrome] Chuyển sang mode 'Tạo video từ các thành phần'...")
-        self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP1)  # Click 1
-        time.sleep(0.1)
-        self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP2)  # Click 2
-        time.sleep(0.3)
-        result = self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP3)  # Click option
-        if result == 'CLICKED':
-            self.log("[I2V-Chrome] ✓ Đã chuyển sang video mode")
-            time.sleep(1)  # Đợi UI update
-        else:
-            self.log(f"[I2V-Chrome] Không thể chuyển sang video mode: {result}", "WARN")
+        # FORCE MODE: Không chuyển mode, ở nguyên "Tạo hình ảnh"
+        # Interceptor sẽ convert image request → video request
+        self.log("[I2V-Chrome] FORCE MODE: Ở nguyên 'Tạo hình ảnh', Interceptor convert → video")
 
-        # 2. Reset video state
+        # 1. Reset video state
         self.driver.run_js("""
             window._videoResponse = null;
             window._videoError = null;
             window._videoPending = false;
-            window._customVideoPayload = null;
+            window._forceVideoPayload = null;
         """)
 
-        # 3. Chuẩn bị custom video payload với media_id
+        # 2. Chuẩn bị FORCE video payload với media_id
         import uuid
         session_id = f";{int(time.time() * 1000)}"
         scene_id = str(uuid.uuid4())
@@ -2530,11 +2522,11 @@ class DrissionFlowAPI:
             }]
         }
 
-        # Set custom payload - interceptor sẽ inject fresh reCAPTCHA
-        self.driver.run_js(f"window._customVideoPayload = {json.dumps(video_payload)};")
-        self.log(f"[I2V-Chrome] ✓ Custom payload ready (mediaId: {media_id[:40]}...)")
+        # Set FORCE VIDEO PAYLOAD - Interceptor sẽ convert image request → video request
+        self.driver.run_js(f"window._forceVideoPayload = {json.dumps(video_payload)};")
+        self.log(f"[I2V-Chrome] ✓ FORCE payload ready (mediaId: {media_id[:40]}...)")
 
-        # 4. Tìm textarea và nhập prompt (trigger Chrome gửi request)
+        # 3. Tìm textarea và nhập prompt (trigger Chrome gửi IMAGE request)
         textarea = self._find_textarea()
         if not textarea:
             return False, None, "Không tìm thấy textarea"
@@ -2552,9 +2544,9 @@ class DrissionFlowAPI:
         # Đợi reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        # Nhấn Enter để gửi
+        # 4. Nhấn Enter → Chrome gửi IMAGE request → Interceptor convert → VIDEO request
         textarea.input('\n')
-        self.log("[I2V-Chrome] → Pressed Enter, Chrome đang gửi request...")
+        self.log("[I2V-Chrome] → Enter → Interceptor converting IMAGE → VIDEO request...")
 
         # 5. Đợi video response từ browser
         start_time = time.time()
