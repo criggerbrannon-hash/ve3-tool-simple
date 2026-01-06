@@ -106,8 +106,7 @@ proxy_api_url: "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
 
 # DeepSeek API (ưu tiên - rẻ và ổn định)
 # Lấy key tại: https://platform.deepseek.com/
-deepseek_api_keys:
-  - ""  # Thêm API key của bạn vào đây
+deepseek_api_key: "sk-9e957b1193f54ac3870fe05a95139633"
 
 # Gemini API
 # Lấy key tại: https://makersuite.google.com/app/apikey
