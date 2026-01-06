@@ -1220,7 +1220,9 @@ Trả về JSON:"""
                                 else:
                                     srt_start = str(original_scene.get("srt_start", "00:00:00,000"))
                                     srt_end = str(original_scene.get("srt_end", "00:00:00,000"))
-                                    duration = original_scene.get("duration", 5.0)
+                                    # Random duration 5-8 giây cho video clips
+                                    import random
+                                    duration = random.uniform(5.0, 8.0)
 
                                 chars_used = ai_scene.get("characters", ["nvc"])
                                 backup_scenes_data.append({
@@ -3261,7 +3263,9 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
         else:
             srt_start = str(scene.get("srt_start", "00:00:00,000"))
             srt_end = str(scene.get("srt_end", "00:00:00,000"))
-            duration = scene.get("duration", 5.0)
+            # Random duration 5-8 giây cho video clips
+            import random
+            duration = random.uniform(5.0, 8.0)
 
         # Simple shot type detection
         shot_type = "Medium shot"
