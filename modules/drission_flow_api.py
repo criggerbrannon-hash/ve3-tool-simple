@@ -1955,9 +1955,9 @@ class DrissionFlowAPI:
 
         # F5 refresh sau mỗi ảnh thành công để tránh 403 cho prompt tiếp theo
         try:
-            if self._page:
-                self._page.refresh()
-                time.sleep(1)  # Đợi page load
+            if self.driver:
+                self.driver.refresh()
+                time.sleep(2)  # Đợi page load
                 self.log("🔄 Refreshed page")
         except Exception as e:
             self.log(f"⚠️ Refresh warning: {e}", "WARN")
