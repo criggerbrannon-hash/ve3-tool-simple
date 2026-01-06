@@ -3486,6 +3486,11 @@ class BrowserFlowGenerator:
         # Track failed prompts để retry sau
         failed_prompts = []  # List[Tuple[prompt_data, index, error]]
 
+        # Đọc force_model từ config (đảm bảo dùng model chất lượng cao)
+        force_model = self.config.get('force_model', 'auto')
+        if force_model:
+            self._log(f"[MODEL] Force model: {force_model}")
+
         # Load Excel workbook
         workbook = None
         if excel_path and Path(excel_path).exists():
@@ -3632,11 +3637,13 @@ class BrowserFlowGenerator:
 
             try:
                 # Generate image using DrissionFlowAPI with reference images
+                # force_model: đảm bảo dùng model chất lượng cao (Nano Banana Pro)
                 success, images, error = drission_api.generate_image(
                     prompt=prompt,
                     save_dir=save_dir,
                     filename=pid,
-                    image_inputs=image_inputs if image_inputs else None
+                    image_inputs=image_inputs if image_inputs else None,
+                    force_model=force_model
                 )
 
                 if success and images:

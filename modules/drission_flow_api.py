@@ -187,13 +187,29 @@ window._customVideoPayload=null; // Payload đầy đủ từ Python cho VIDEO (
                 try {
                     var cfg = window._modifyConfig;
 
-                    // LOG: Xem Chrome đang dùng model gì
+                    // LOG: Xem Chrome đang dùng model gì (kiểm tra TẤT CẢ fields liên quan)
+                    var currentModel = 'UNKNOWN';
                     if (chromeBody.requests && chromeBody.requests[0]) {
                         var req = chromeBody.requests[0];
-                        console.log('[CHROME MODEL] generationModelId:', req.generationModelId || 'NOT_SET');
-                        console.log('[CHROME MODEL] aspectRatio:', req.aspectRatio || 'NOT_SET');
-                        console.log('[CHROME MODEL] outputOptions:', JSON.stringify(req.outputOptions || {}));
+                        console.log('=== CHROME IMAGE REQUEST DEBUG ===');
+                        console.log('[CHROME] generationModelId:', req.generationModelId || 'NOT_SET');
+                        console.log('[CHROME] imageModelName:', req.imageModelName || 'NOT_SET');
+                        console.log('[CHROME] imageGenerationModel:', req.imageGenerationModel || 'NOT_SET');
+                        console.log('[CHROME] model:', req.model || 'NOT_SET');
+                        console.log('[CHROME] aspectRatio:', req.aspectRatio || 'NOT_SET');
+                        console.log('[CHROME] imageAspectRatio:', req.imageAspectRatio || 'NOT_SET');
+                        console.log('[CHROME] outputOptions:', JSON.stringify(req.outputOptions || {}));
+                        console.log('[CHROME] prompt (first 50 chars):', (req.prompt || '').substring(0, 50));
+                        // Log toàn bộ keys để debug
+                        console.log('[CHROME] ALL REQUEST KEYS:', Object.keys(req).join(', '));
+                        console.log('=== END DEBUG ===');
+
+                        // Detect current model
+                        currentModel = req.imageModelName || req.generationModelId || req.imageGenerationModel || req.model || 'NOT_SET';
                     }
+
+                    // Lưu model đang dùng để Python có thể đọc
+                    window._chromeModel = currentModel;
 
                     if (cfg.imageCount && chromeBody.requests) {
                         chromeBody.requests = chromeBody.requests.slice(0, cfg.imageCount);
@@ -204,6 +220,25 @@ window._customVideoPayload=null; // Payload đầy đủ từ Python cho VIDEO (
                             req.imageInputs = cfg.imageInputs;
                         });
                         console.log('[MODIFY] Added ' + cfg.imageInputs.length + ' reference images');
+                    }
+
+                    // FORCE MODEL: Đảm bảo dùng model chất lượng cao (Nano Banana Pro = GEM_PIX_2)
+                    if (cfg.forceModel && chromeBody.requests) {
+                        var goodModels = ['GEM_PIX_2', 'GEM_PIX', 'IMAGEN_4', 'IMAGEN_3_5'];
+                        var needForce = !goodModels.includes(currentModel);
+
+                        if (needForce || cfg.forceModel === 'always') {
+                            chromeBody.requests.forEach(function(req) {
+                                // Thử set cả 2 fields để đảm bảo hoạt động
+                                req.imageModelName = cfg.forceModel === 'always' ? cfg.forceModelName : 'GEM_PIX_2';
+                                if (req.generationModelId) {
+                                    req.generationModelId = req.imageModelName;
+                                }
+                            });
+                            console.log('[FORCE MODEL] Changed to:', cfg.forceModelName || 'GEM_PIX_2', '(was:', currentModel, ')');
+                        } else {
+                            console.log('[MODEL OK] Using Chrome model:', currentModel);
+                        }
                     }
 
                     opts.body = JSON.stringify(chromeBody);
@@ -1614,7 +1649,8 @@ class DrissionFlowAPI:
         prompt: str,
         num_images: int = 1,
         image_inputs: Optional[List[Dict]] = None,
-        timeout: int = 120
+        timeout: int = 120,
+        force_model: str = ""
     ) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Generate image bằng MODIFY MODE - giữ nguyên Chrome's payload.
@@ -1637,6 +1673,8 @@ class DrissionFlowAPI:
             num_images: Số ảnh cần tạo
             image_inputs: Reference images [{name, inputType}] với name = media_id
             timeout: Timeout đợi response (giây)
+            force_model: Force model name (GEM_PIX_2, IMAGEN_4, etc.)
+                         "" = không force, "auto" = auto-detect và force nếu cần
 
         Returns:
             Tuple[list of GeneratedImage, error message]
@@ -1657,6 +1695,24 @@ class DrissionFlowAPI:
         modify_config = {
             "imageCount": num_images if num_images else 1  # Luôn giới hạn số ảnh
         }
+
+        # Force model nếu được chỉ định (đảm bảo dùng Nano Banana Pro = GEM_PIX_2)
+        if force_model:
+            if force_model.lower() == "auto":
+                # Auto-detect và force nếu Chrome không dùng model tốt
+                modify_config["forceModel"] = True
+                modify_config["forceModelName"] = "GEM_PIX_2"
+                self.log("→ FORCE MODEL: auto (GEM_PIX_2 if needed)")
+            elif force_model.lower() == "always":
+                # Luôn force model
+                modify_config["forceModel"] = "always"
+                modify_config["forceModelName"] = "GEM_PIX_2"
+                self.log("→ FORCE MODEL: always (GEM_PIX_2)")
+            else:
+                # Force model cụ thể
+                modify_config["forceModel"] = "always"
+                modify_config["forceModelName"] = force_model
+                self.log(f"→ FORCE MODEL: {force_model}")
 
         if image_inputs and len(image_inputs) > 0:
             modify_config["imageInputs"] = image_inputs
@@ -1743,7 +1799,8 @@ class DrissionFlowAPI:
         save_dir: Optional[Path] = None,
         filename: str = None,
         max_retries: int = 3,
-        image_inputs: Optional[List[Dict]] = None
+        image_inputs: Optional[List[Dict]] = None,
+        force_model: str = ""
     ) -> Tuple[bool, List[GeneratedImage], Optional[str]]:
         """
         Generate image - full flow với retry khi gặp 403.
@@ -1754,6 +1811,8 @@ class DrissionFlowAPI:
             filename: Tên file (không có extension)
             max_retries: Số lần retry khi gặp 403 (mặc định 3)
             image_inputs: List of reference images [{name, inputType}]
+            force_model: Force model name (GEM_PIX_2, IMAGEN_4, etc.)
+                         "" = không force, "auto" = auto-detect
 
         Returns:
             Tuple[success, list of images, error]
@@ -1774,7 +1833,8 @@ class DrissionFlowAPI:
                 prompt=prompt,
                 num_images=1,
                 image_inputs=image_inputs,
-                timeout=90
+                timeout=90,
+                force_model=force_model
             )
 
             if error:
