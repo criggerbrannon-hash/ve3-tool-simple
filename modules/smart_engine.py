@@ -1614,8 +1614,10 @@ class SmartEngine:
         """
         self.log("=== TAO ANH BANG API MODE ===")
 
-        # Tim Excel file
-        excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))
+        # Tim Excel file (flat hoặc nested structure)
+        excel_files = list(proj_dir.glob("*_prompts.xlsx"))  # Flat first
+        if not excel_files:
+            excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))  # Nested fallback
         if not excel_files:
             self.log("Khong tim thay file Excel!", "ERROR")
             return {"success": 0, "failed": len(prompts)}
@@ -1703,9 +1705,11 @@ class SmartEngine:
             if excel_project_id:
                 self.log(f"  -> Resume: Tìm thấy project_id trong Excel: {excel_project_id[:8]}...")
 
-            # Fallback: đọc từ cache nếu Excel không có
+            # Fallback: đọc từ cache nếu Excel không có (flat hoặc nested)
             cached_project_id = None
-            cache_path = proj_dir / "prompts" / ".media_cache.json"
+            cache_path = proj_dir / ".media_cache.json"  # Flat first
+            if not cache_path.exists():
+                cache_path = proj_dir / "prompts" / ".media_cache.json"  # Nested fallback
             if not excel_project_id and cache_path.exists():
                 try:
                     with open(cache_path, 'r', encoding='utf-8') as f:
@@ -1812,8 +1816,10 @@ class SmartEngine:
         except:
             pass
 
-        # Tim Excel file
-        excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))
+        # Tim Excel file (flat hoặc nested structure)
+        excel_files = list(proj_dir.glob("*_prompts.xlsx"))  # Flat first
+        if not excel_files:
+            excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))  # Nested fallback
         if not excel_files:
             self.log("Khong tim thay file Excel!", "ERROR")
             return {"success": 0, "failed": len(prompts)}
@@ -2441,7 +2447,11 @@ class SmartEngine:
         # === LOAD CACHED MEDIA_NAMES ===
         # Dùng để tạo video từ ảnh mà không cần upload lại
         media_cache = {}
-        cache_path = proj_dir / "prompts" / ".media_cache.json"
+        # Cache path: flat structure = proj_dir/.media_cache.json, nested = proj_dir/prompts/.media_cache.json
+        if getattr(self, 'use_flat_structure', False):
+            cache_path = proj_dir / ".media_cache.json"
+        else:
+            cache_path = proj_dir / "prompts" / ".media_cache.json"
         if cache_path.exists():
             try:
                 with open(cache_path, 'r', encoding='utf-8') as f:
@@ -3906,7 +3916,9 @@ class SmartEngine:
 
                 # 3. FALLBACK: Token từ project cache (.media_cache.json)
                 if proj_dir:
-                    cache_path = proj_dir / "prompts" / ".media_cache.json"
+                    cache_path = proj_dir / ".media_cache.json"  # Flat first
+                    if not cache_path.exists():
+                        cache_path = proj_dir / "prompts" / ".media_cache.json"  # Nested fallback
                     if cache_path.exists():
                         try:
                             with open(cache_path, 'r', encoding='utf-8') as f:
@@ -4106,8 +4118,10 @@ class SmartEngine:
                         self._video_settings['project_id'] = drission_api.project_id
                         self.log(f"[VIDEO] Lấy được token mới: {drission_api.project_id[:8]}...")
 
-                        # Lưu vào cache để dùng lại
-                        cache_path = proj_dir / "prompts" / ".media_cache.json"
+                        # Lưu vào cache để dùng lại (flat hoặc nested)
+                        cache_path = proj_dir / ".media_cache.json"  # Flat first
+                        if not cache_path.exists() and (proj_dir / "prompts").exists():
+                            cache_path = proj_dir / "prompts" / ".media_cache.json"  # Nested if prompts folder exists
                         try:
                             cache_data = {}
                             if cache_path.exists():

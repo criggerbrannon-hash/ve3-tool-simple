@@ -105,10 +105,19 @@ class BrowserFlowGenerator:
 
         # Paths
         self.img_path = self.project_path / "img"
-        self.prompts_path = self.project_path / "prompts"
         self.nv_path = self.project_path / "nv"
 
-        # Tao thu muc neu chua co
+        # Check flat vs nested structure for prompts
+        # Flat: Excel trực tiếp trong project folder
+        # Nested: Excel trong prompts/ subfolder
+        if list(self.project_path.glob("*_prompts.xlsx")):
+            self.prompts_path = self.project_path  # Flat structure
+            self.use_flat_structure = True
+        else:
+            self.prompts_path = self.project_path / "prompts"  # Nested structure
+            self.use_flat_structure = False
+
+        # Tao thu muc neu chua co (chi img va nv, KHONG tao prompts cho flat structure)
         self.img_path.mkdir(parents=True, exist_ok=True)
         self.nv_path.mkdir(parents=True, exist_ok=True)
 
@@ -498,7 +507,9 @@ class BrowserFlowGenerator:
     # =========================================================================
 
     def _get_media_cache_path(self) -> Path:
-        """Duong dan file cache media_names."""
+        """Duong dan file cache media_names (flat hoặc nested)."""
+        if getattr(self, 'use_flat_structure', False):
+            return self.project_path / ".media_cache.json"
         return self.project_path / "prompts" / ".media_cache.json"
 
     def _load_media_cache(self) -> Dict[str, Any]:
