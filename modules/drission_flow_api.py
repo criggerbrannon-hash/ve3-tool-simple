@@ -2060,6 +2060,11 @@ class DrissionFlowAPI:
         if not self._ready:
             return False, [], "API chưa setup! Gọi setup() trước."
 
+        # Nếu đang dùng fallback model (do quota), override force_model
+        if self._use_fallback_model:
+            force_model = "GEM_PIX"
+            self.log(f"→ FORCE MODEL: GEM_PIX (fallback mode)")
+
         last_error = None
 
         # Log reference images if provided
