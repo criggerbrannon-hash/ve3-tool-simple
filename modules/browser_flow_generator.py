@@ -1134,7 +1134,8 @@ class BrowserFlowGenerator:
         # QUAN TRONG: Dung numeric ID (1, 2, 3) de khop voi SmartEngine video composer
         prompts_data = []
         for scene in scenes_to_process:
-            scene_id = str(scene.scene_id)  # Dung numeric ID, khong phai scene_001
+            # Normalize scene_id: 1.0 -> "1", 2.0 -> "2"
+            scene_id = str(int(float(scene.scene_id))) if scene.scene_id else "0"
             prompts_data.append({
                 "sceneId": scene_id,
                 "prompt": scene.img_prompt
@@ -2588,7 +2589,8 @@ class BrowserFlowGenerator:
 
         # Process tung scene
         for i, scene in enumerate(scenes_to_process):
-            scene_id = str(scene.scene_id)
+            # Normalize: 1.0 -> "1"
+            scene_id = str(int(float(scene.scene_id))) if scene.scene_id else "0"
             prompt = scene.img_prompt
 
             self._log(f"\n[{i+1}/{len(scenes_to_process)}] Scene {scene_id}")
@@ -2858,7 +2860,8 @@ class BrowserFlowGenerator:
 
         # Generate videos
         for i, (scene, video_prompt) in enumerate(scenes_to_process):
-            scene_id = str(scene.scene_id)
+            # Normalize: 1.0 -> "1"
+            scene_id = str(int(float(scene.scene_id))) if scene.scene_id else "0"
             self._log(f"\n[{i+1}/{len(scenes_to_process)}] Scene: {scene_id}")
             self._log(f"Prompt ({len(video_prompt)} chars): {video_prompt[:80]}...")
 
@@ -2987,7 +2990,8 @@ class BrowserFlowGenerator:
         # Lấy scenes cần tạo video (có media_id trong cache, chưa có video)
         scenes_for_video = []
         for scene in workbook.get_scenes():
-            scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+            # Normalize: 1.0 -> "1"
+            scene_id = str(int(float(scene.scene_id))) if hasattr(scene, 'scene_id') and scene.scene_id else ''
             if not scene_id or not scene_id.isdigit():
                 continue
 
@@ -4044,7 +4048,8 @@ class BrowserFlowGenerator:
         if video_count > 0 and workbook:
             try:
                 for scene in workbook.get_scenes():
-                    scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+                    # Normalize: 1.0 -> "1"
+                    scene_id = str(int(float(scene.scene_id))) if hasattr(scene, 'scene_id') and scene.scene_id else ''
                     if not scene_id or not scene_id.isdigit():
                         continue  # Bỏ qua nv/loc
 
@@ -4078,7 +4083,8 @@ class BrowserFlowGenerator:
 
                     for scene in all_scenes:
                         # Chỉ lấy scene (không phải character/location)
-                        scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+                        # Normalize: 1.0 -> "1"
+                        scene_id = str(int(float(scene.scene_id))) if hasattr(scene, 'scene_id') and scene.scene_id else ''
                         if not scene_id or not scene_id.isdigit():
                             continue
 
