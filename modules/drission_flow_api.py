@@ -1958,6 +1958,9 @@ class DrissionFlowAPI:
             modify_config["imageInputs"] = image_inputs
             self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
             self.log(f"→ MODIFY MODE: {len(image_inputs)} reference image(s), {modify_config['imageCount']} image(s)")
+            # Log chi tiết từng reference
+            for idx, img_inp in enumerate(image_inputs):
+                self.log(f"   [IMG_INPUT #{idx+1}] name={img_inp.get('name', 'N/A')[:40]}..., type={img_inp.get('imageInputType', 'N/A')}")
         else:
             self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
             self.log(f"→ MODIFY MODE: {modify_config['imageCount']} image(s), no reference")

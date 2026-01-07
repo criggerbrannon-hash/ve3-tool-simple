@@ -3644,10 +3644,13 @@ class BrowserFlowGenerator:
             # Merge Excel và cache media_ids (Excel ưu tiên)
             all_media_ids = {**cached_media_names, **excel_media_ids}
 
-            if not is_reference_image and all_media_ids:
+            if not is_reference_image:
                 # Parse reference_files từ prompt_data
                 ref_str = prompt_data.get('reference_files', '')
                 ref_files = []
+
+                self._log(f"   [REF] Raw reference_files: '{ref_str}'")
+
                 if ref_str:
                     try:
                         parsed = json.loads(ref_str) if ref_str.startswith('[') else None
@@ -3663,35 +3666,52 @@ class BrowserFlowGenerator:
                     ref_files = ["nvc.png"]
                     self._log(f"   [REF] No reference, using default nvc.png")
 
+                self._log(f"   [REF] Parsed ref_files: {ref_files}")
+                self._log(f"   [REF] Available media_ids: {list(all_media_ids.keys())}")
+
                 # Build image_inputs từ media_ids (Excel hoặc cache)
                 # QUAN TRỌNG: Dùng "imageInputType" (không phải "inputType") với giá trị đầy đủ
+                # Build case-insensitive lookup dicts
+                excel_media_ids_lower = {k.lower(): v for k, v in excel_media_ids.items()}
+                cached_media_names_lower = {k.lower(): v for k, v in cached_media_names.items()}
+
+                missing_refs = []
                 for ref_file in ref_files:
                     ref_id = ref_file.replace('.png', '').replace('.jpg', '')
-                    # Thử Excel media_id trước
-                    if ref_id in excel_media_ids:
-                        media_id = excel_media_ids[ref_id]
+                    ref_id_lower = ref_id.lower()
+
+                    # Thử Excel media_id trước (case-insensitive)
+                    if ref_id_lower in excel_media_ids_lower:
+                        media_id = excel_media_ids_lower[ref_id_lower]
                         image_inputs.append({
                             "name": media_id,
                             "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
                         })
-                        self._log(f"   [REF] Using (Excel): {ref_id} → {media_id[:30]}...")
-                    elif ref_id in cached_media_names:
-                        # Fallback to cache
-                        media_info = cached_media_names[ref_id]
+                        self._log(f"   [REF] ✓ {ref_id} → {media_id[:30]}... (Excel)")
+                    elif ref_id_lower in cached_media_names_lower:
+                        # Fallback to cache (case-insensitive)
+                        media_info = cached_media_names_lower[ref_id_lower]
                         media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
                         if media_name:
                             image_inputs.append({
                                 "name": media_name,
                                 "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
                             })
-                            self._log(f"   [REF] Using (cache): {ref_id} → {media_name[:30]}...")
+                            self._log(f"   [REF] ✓ {ref_id} → {media_name[:30]}... (cache)")
+                    else:
+                        missing_refs.append(ref_id)
+                        self._log(f"   [REF] ✗ {ref_id} - KHÔNG CÓ MEDIA_ID!", "warn")
+
+                if missing_refs:
+                    self._log(f"   [REF] ⚠️ THIẾU {len(missing_refs)} media_id: {missing_refs}", "warn")
+                    self._log(f"   [REF] → Cần tạo ảnh nv/loc trước để có media_id!", "warn")
 
                 if image_inputs:
-                    self._log(f"   [REF] Total: {len(image_inputs)} reference images")
+                    self._log(f"   [REF] Total: {len(image_inputs)}/{len(ref_files)} reference images")
                     for idx, img_inp in enumerate(image_inputs):
                         self._log(f"   [REF] #{idx+1}: {img_inp.get('name', 'N/A')[:40]}...")
                 else:
-                    self._log(f"   [REF] No media_id found for references", "warn")
+                    self._log(f"   [REF] ⚠️ KHÔNG CÓ REFERENCE NÀO! Ảnh sẽ tạo không có tham chiếu", "warn")
 
             try:
                 # Generate image using DrissionFlowAPI with reference images
