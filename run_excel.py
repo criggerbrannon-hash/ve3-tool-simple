@@ -289,6 +289,44 @@ def get_pending_files(voice_files: list) -> list:
     return pending
 
 
+def scan_incomplete_projects() -> list:
+    """
+    Scan PROJECTS folder for incomplete projects.
+    Returns list of project folders that have voice but incomplete Excel.
+    """
+    incomplete = []
+
+    if not PROJECTS_DIR.exists():
+        return incomplete
+
+    for project_dir in PROJECTS_DIR.iterdir():
+        if not project_dir.is_dir():
+            continue
+
+        name = project_dir.name
+
+        # Skip if already complete
+        if is_project_complete(project_dir, name):
+            continue
+
+        # Check if project has voice file (mp3/wav/etc.)
+        voice_extensions = {'.mp3', '.wav', '.m4a', '.flac', '.ogg'}
+        has_voice = any(
+            f.suffix.lower() in voice_extensions
+            for f in project_dir.iterdir()
+            if f.is_file()
+        )
+
+        if has_voice:
+            # Find the voice file
+            for f in project_dir.iterdir():
+                if f.is_file() and f.suffix.lower() in voice_extensions:
+                    incomplete.append(f)
+                    break
+
+    return sorted(incomplete, key=lambda x: x.stem)
+
+
 def run_scan_loop(voice_dir: Path):
     """Run continuous scan loop."""
     print(f"\n{'='*60}")
@@ -303,37 +341,53 @@ def run_scan_loop(voice_dir: Path):
 
     while True:
         cycle += 1
-        print(f"\n[CYCLE {cycle}] Scanning {voice_dir}...")
+        print(f"\n[CYCLE {cycle}] Scanning...")
 
-        # Find all voice files
+        # 1. Find voice files in voice folder
         voice_files = scan_voice_folder(voice_dir)
+        pending_from_voice = get_pending_files(voice_files) if voice_files else []
 
-        if not voice_files:
-            print(f"  No voice files found in subdirectories")
-        else:
-            # Filter pending files
-            pending = get_pending_files(voice_files)
+        # 2. Find incomplete projects in PROJECTS folder
+        incomplete_projects = scan_incomplete_projects()
 
-            print(f"  Found: {len(voice_files)} total, {len(pending)} pending")
+        # Combine and deduplicate (by project name)
+        all_pending = []
+        seen_names = set()
 
-            if pending:
-                # Process pending files
-                success = 0
-                failed = 0
+        for voice_path in pending_from_voice:
+            name = voice_path.stem
+            if name not in seen_names:
+                all_pending.append(voice_path)
+                seen_names.add(name)
 
-                for voice_path in pending:
-                    try:
-                        if process_voice_to_excel(voice_path):
-                            success += 1
-                        else:
-                            failed += 1
-                    except Exception as e:
-                        print(f"  ❌ Error processing {voice_path.name}: {e}")
+        for voice_path in incomplete_projects:
+            name = voice_path.stem
+            if name not in seen_names:
+                all_pending.append(voice_path)
+                seen_names.add(name)
+
+        print(f"  Voice folder: {len(voice_files)} files, {len(pending_from_voice)} pending")
+        print(f"  PROJECTS folder: {len(incomplete_projects)} incomplete")
+        print(f"  Total pending: {len(all_pending)}")
+
+        if all_pending:
+            # Process pending files
+            success = 0
+            failed = 0
+
+            for voice_path in all_pending:
+                try:
+                    if process_voice_to_excel(voice_path):
+                        success += 1
+                    else:
                         failed += 1
+                except Exception as e:
+                    print(f"  ❌ Error processing {voice_path.name}: {e}")
+                    failed += 1
 
-                print(f"\n[CYCLE {cycle} DONE] {success} success, {failed} failed")
-            else:
-                print(f"  All projects complete!")
+            print(f"\n[CYCLE {cycle} DONE] {success} success, {failed} failed")
+        else:
+            print(f"  All projects complete!")
 
         # Wait before next scan
         print(f"\n  Waiting {SCAN_INTERVAL}s before next scan... (Ctrl+C to stop)")
