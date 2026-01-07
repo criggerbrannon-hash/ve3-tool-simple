@@ -3784,10 +3784,14 @@ class SmartEngine:
                     ref_col = i
 
                 # Tim cot characters_used va location_used (de build reference_files neu can)
-                if h_lower == 'characters_used':
+                # Flexible matching: characters_used, character_used, chars_used, etc.
+                if chars_col is None and ('character' in h_lower or 'chars' in h_lower) and 'used' in h_lower:
                     chars_col = i
-                if h_lower == 'location_used':
+                if loc_col is None and ('location' in h_lower or 'loc' in h_lower) and 'used' in h_lower:
                     loc_col = i
+
+            # Debug: Log các cột đã tìm thấy
+            self.log(f"  [COLS] chars_col={chars_col}, loc_col={loc_col}, ref_col={ref_col}")
 
             # Neu khong tim thay, thu cot dau = ID, tim cot co "prompt"
             if id_col is None and len(headers) > 0 and headers[0]:
@@ -3832,34 +3836,44 @@ class SmartEngine:
                 if ref_col is not None and ref_col < len(row):
                     reference_files = row[ref_col] or ""
 
+                # Check if reference_files is empty (string "[]" or "{}" or just whitespace)
+                ref_is_empty = (
+                    not reference_files or
+                    str(reference_files).strip() in ('', '[]', '{}', 'null', 'None')
+                )
+
                 # === FALLBACK: Build reference_files tu characters_used + location_used ===
                 # Neu reference_files rong, tao tu cac cot khac (dao dien da set)
-                if not reference_files:
+                if ref_is_empty:
                     ref_list = []
 
                     # Lay characters_used
                     if chars_col is not None and chars_col < len(row):
                         chars_val = row[chars_col]
                         if chars_val:
+                            self.log(f"  [DEBUG] Scene {pid_str}: characters_used RAW = '{chars_val}'")
                             try:
                                 chars = json.loads(str(chars_val)) if str(chars_val).startswith('[') else [c.strip() for c in str(chars_val).split(',') if c.strip()]
+                                self.log(f"  [DEBUG] Scene {pid_str}: characters parsed = {chars}")
                                 for c in chars:
                                     c_id = c.replace('.png', '').strip()
                                     if c_id and c_id not in ref_list:
                                         ref_list.append(f"{c_id}.png")
-                            except:
-                                pass
+                            except Exception as e:
+                                self.log(f"  [DEBUG] Scene {pid_str}: PARSE ERROR = {e}")
 
                     # Lay location_used
                     if loc_col is not None and loc_col < len(row):
                         loc_val = row[loc_col]
                         if loc_val:
+                            self.log(f"  [DEBUG] Scene {pid_str}: location_used RAW = '{loc_val}'")
                             loc_id = str(loc_val).replace('.png', '').strip()
                             if loc_id and f"{loc_id}.png" not in ref_list:
                                 ref_list.append(f"{loc_id}.png")
 
                     if ref_list:
                         reference_files = json.dumps(ref_list)
+                        self.log(f"  [DEBUG] Scene {pid_str}: FINAL reference_files = {reference_files}")
 
                 # Xac dinh output folder
                 # Characters (nv*) and Locations (loc*) -> nv/ folder

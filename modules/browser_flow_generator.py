@@ -3688,6 +3688,8 @@ class BrowserFlowGenerator:
 
                 if image_inputs:
                     self._log(f"   [REF] Total: {len(image_inputs)} reference images")
+                    for idx, img_inp in enumerate(image_inputs):
+                        self._log(f"   [REF] #{idx+1}: {img_inp.get('name', 'N/A')[:40]}...")
                 else:
                     self._log(f"   [REF] No media_id found for references", "warn")
 
