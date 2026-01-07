@@ -13,6 +13,13 @@ project_root: "./VE3_TOOL"
 # %USERNAME% sẽ tự động thay bằng tên user của máy
 chrome_portable: "C:\\Users\\%USERNAME%\\Documents\\KP\\KP.exe"
 
+# Scene Filter - Chạy 2 Chrome song song
+# "all"  = xử lý tất cả scenes (default)
+# "odd"  = chỉ xử lý scene lẻ (1, 3, 5...) + ảnh nv/loc
+# "even" = chỉ xử lý scene chẵn (2, 4, 6...)
+# Chạy 2 terminal: 1 với odd, 1 với even để tăng tốc gấp đôi
+scene_filter: "all"
+
 # [KHÔNG CẦN SỬA] - Chỉ dùng khi chrome_portable trống
 chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 chrome_profile: ""

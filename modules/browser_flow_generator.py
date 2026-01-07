@@ -3547,6 +3547,11 @@ class BrowserFlowGenerator:
         if ref_ids:
             self._log(f"[INFO] Reference images (nv/loc): {ref_ids}")
 
+        # === SCENE FILTER: odd/even cho parallel Chrome ===
+        scene_filter = self.config.get('scene_filter', 'all')  # "all", "odd", "even"
+        if scene_filter and scene_filter != 'all':
+            self._log(f"[FILTER] Scene filter: {scene_filter.upper()} (only {scene_filter} scene IDs)")
+
         for i, prompt_data in enumerate(prompts):
             pid = str(prompt_data.get('id', i + 1))
             prompt = prompt_data.get('prompt', '')
@@ -3561,6 +3566,31 @@ class BrowserFlowGenerator:
                 self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (DO_NOT_GENERATE)")
                 self.stats["skipped"] += 1
                 continue
+
+            # === SCENE FILTER: Skip nếu không match odd/even ===
+            if scene_filter and scene_filter != 'all':
+                # Xác định là ảnh tham chiếu hay scene số
+                is_ref = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+
+                if is_ref:
+                    # Reference images (nv*/loc*): chỉ "odd" Chrome xử lý
+                    if scene_filter == 'even':
+                        self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (ref image, handled by odd Chrome)")
+                        self.stats["skipped"] += 1
+                        continue
+                else:
+                    # Numeric scenes: filter by odd/even
+                    try:
+                        scene_num = int(pid)
+                        is_odd = scene_num % 2 == 1
+                        if scene_filter == 'odd' and not is_odd:
+                            self.stats["skipped"] += 1
+                            continue
+                        if scene_filter == 'even' and is_odd:
+                            self.stats["skipped"] += 1
+                            continue
+                    except ValueError:
+                        pass  # Non-numeric ID, process anyway
 
             # Xác định là ảnh tham chiếu (nv*/loc*) hay ảnh scene
             is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
