@@ -181,7 +181,7 @@ ken_burns_intensity: "normal"
 # Lớn hơn = chính xác hơn nhưng chậm hơn và cần nhiều RAM/VRAM
 # Tiếng Anh: "small" hoặc "medium" là đủ tốt
 # Tiếng Việt: "medium" hoặc "large-v3" (khó hơn)
-whisper_model: "medium"
+whisper_model: "base"
 whisper_language: "en"
 
 # Logging
