@@ -3547,10 +3547,21 @@ class BrowserFlowGenerator:
         if ref_ids:
             self._log(f"[INFO] Reference images (nv/loc): {ref_ids}")
 
-        # === SCENE FILTER: odd/even cho parallel Chrome ===
-        scene_filter = self.config.get('scene_filter', 'all')  # "all", "odd", "even"
-        if scene_filter and scene_filter != 'all':
-            self._log(f"[FILTER] Scene filter: {scene_filter.upper()} (only {scene_filter} scene IDs)")
+        # === PARALLEL CHROME: chia scene cho nhiều Chrome ===
+        # Cách dùng: python run_worker.py 1 (hoặc 2)
+        # Terminal 1 → Chrome 1 làm scenes 1,3,5,... + ảnh nv*/loc*
+        # Terminal 2 → Chrome 2 làm scenes 2,4,6,...
+        # Format: "1/2", "2/4", etc.
+        parallel_chrome = os.environ.get('PARALLEL_CHROME', '') or str(self.config.get('parallel_chrome', ''))
+        worker_id, total_workers = 0, 1
+        if parallel_chrome and '/' in parallel_chrome:
+            try:
+                parts = parallel_chrome.split('/')
+                worker_id = int(parts[0])
+                total_workers = int(parts[1])
+                self._log(f"[PARALLEL] Chrome {worker_id}/{total_workers} - Scenes: {worker_id},{worker_id+total_workers},{worker_id+2*total_workers}...")
+            except:
+                worker_id, total_workers = 0, 1
 
         for i, prompt_data in enumerate(prompts):
             pid = str(prompt_data.get('id', i + 1))
@@ -3567,30 +3578,27 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
-            # === SCENE FILTER: Skip nếu không match odd/even ===
-            if scene_filter and scene_filter != 'all':
-                # Xác định là ảnh tham chiếu hay scene số
+            # === PARALLEL: Skip nếu không thuộc worker này ===
+            if total_workers > 1:
                 is_ref = pid.lower().startswith('nv') or pid.lower().startswith('loc')
 
                 if is_ref:
-                    # Reference images (nv*/loc*): chỉ "odd" Chrome xử lý
-                    if scene_filter == 'even':
-                        self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (ref image, handled by odd Chrome)")
+                    # Reference images: chỉ worker 1 xử lý
+                    if worker_id != 1:
                         self.stats["skipped"] += 1
                         continue
                 else:
-                    # Numeric scenes: filter by odd/even
+                    # Scene số: chia theo modulo
                     try:
                         scene_num = int(pid)
-                        is_odd = scene_num % 2 == 1
-                        if scene_filter == 'odd' and not is_odd:
-                            self.stats["skipped"] += 1
-                            continue
-                        if scene_filter == 'even' and is_odd:
+                        # scene_num % total_workers == (worker_id - 1)
+                        # VD: worker 1/4 làm scenes 1,5,9... (mod 4 = 1)
+                        #     worker 2/4 làm scenes 2,6,10... (mod 4 = 2)
+                        if (scene_num % total_workers) != (worker_id % total_workers):
                             self.stats["skipped"] += 1
                             continue
                     except ValueError:
-                        pass  # Non-numeric ID, process anyway
+                        pass
 
             # Xác định là ảnh tham chiếu (nv*/loc*) hay ảnh scene
             is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')

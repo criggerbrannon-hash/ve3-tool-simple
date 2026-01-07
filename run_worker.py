@@ -528,14 +528,119 @@ def run_single_project(code: str):
     process_project(code)
 
 
+def run_parallel_workers():
+    """
+    Chạy 2 Chrome song song - tự động spawn 2 processes.
+    Chrome 1: scenes 1,3,5,... + ảnh nv*/loc*
+    Chrome 2: scenes 2,4,6,...
+    """
+    import subprocess
+
+    print(f"\n{'='*60}")
+    print(f"  VE3 TOOL - PARALLEL MODE (2 CHROME)")
+    print(f"{'='*60}")
+    print(f"  🚀 Tự động mở 2 Chrome song song")
+    print(f"  ⏱️  Thời gian: giảm 50% (8h → 4h)")
+    print(f"{'='*60}\n")
+
+    # Get current script path
+    script_path = Path(__file__).resolve()
+
+    # Spawn 2 worker processes
+    env1 = os.environ.copy()
+    env1['PARALLEL_CHROME'] = '1/2'
+
+    env2 = os.environ.copy()
+    env2['PARALLEL_CHROME'] = '2/2'
+
+    print("📌 Starting Chrome 1 (scenes 1,3,5,... + nv*/loc*)...")
+    proc1 = subprocess.Popen(
+        [sys.executable, str(script_path), '--worker'],
+        env=env1,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+
+    time.sleep(2)  # Delay để tránh conflict khi mở Chrome
+
+    print("📌 Starting Chrome 2 (scenes 2,4,6,...)...")
+    proc2 = subprocess.Popen(
+        [sys.executable, str(script_path), '--worker'],
+        env=env2,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+
+    print("\n" + "="*60)
+    print("  ✅ 2 Chrome đang chạy song song!")
+    print("  📺 Logs sẽ hiển thị bên dưới (xen kẽ)")
+    print("  ⏹️  Ctrl+C để dừng cả 2")
+    print("="*60 + "\n")
+
+    # Read outputs from both processes
+    import select
+
+    try:
+        while True:
+            # Check if both processes are done
+            if proc1.poll() is not None and proc2.poll() is not None:
+                break
+
+            # Read available output
+            for proc, label in [(proc1, "[C1]"), (proc2, "[C2]")]:
+                if proc.poll() is None or proc.stdout:
+                    try:
+                        line = proc.stdout.readline()
+                        if line:
+                            print(f"{label} {line.rstrip()}")
+                    except:
+                        pass
+
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\n\n⏹️ Stopping both Chrome processes...")
+        proc1.terminate()
+        proc2.terminate()
+        proc1.wait()
+        proc2.wait()
+        print("✅ Done!")
+
+
 def main():
     if len(sys.argv) >= 2:
-        # Single project mode
-        code = sys.argv[1]
-        run_single_project(code)
+        arg = sys.argv[1]
+
+        # === INTERNAL WORKER MODE (spawned by parallel) ===
+        if arg == '--worker':
+            parallel = os.environ.get('PARALLEL_CHROME', '')
+            if parallel:
+                print(f"\n🔀 WORKER MODE: Chrome {parallel}")
+            run_scan_loop()
+            return
+
+        # === PARALLEL CHROME MODE (manual) ===
+        # python run_worker.py 1 → Chrome 1 (scenes 1,3,5,... + ref images)
+        # python run_worker.py 2 → Chrome 2 (scenes 2,4,6,...)
+        if arg in ("1", "2"):
+            os.environ['PARALLEL_CHROME'] = f"{arg}/2"
+            print(f"\n🔀 PARALLEL MODE: Chrome {arg}/2")
+            if arg == "1":
+                print("   → Xử lý: scenes 1,3,5,7,... + ảnh nv*/loc*")
+            else:
+                print("   → Xử lý: scenes 2,4,6,8,...")
+            print("   (Mở thêm 1 terminal chạy số còn lại để tăng tốc 2x)\n")
+            run_scan_loop()
+        else:
+            # Single project mode (code like AR47-0028)
+            run_single_project(arg)
     else:
-        # Scan loop mode
-        run_scan_loop()
+        # === DEFAULT: Auto parallel 2 Chrome ===
+        run_parallel_workers()
 
 
 if __name__ == "__main__":

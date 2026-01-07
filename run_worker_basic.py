@@ -133,21 +133,43 @@ def generate_images(excel_path: Path) -> bool:
 
 
 def main():
+    import os
+
     print("\n" + "=" * 60)
     print("  VE3 TOOL - BASIC IMAGE GENERATOR")
     print("  (Simplified version for image creation only)")
     print("=" * 60 + "\n")
 
+    # Check for parallel Chrome mode
+    parallel_mode = None
+    args = sys.argv[1:]
+
+    # python run_worker_basic.py 1 file.xlsx
+    # python run_worker_basic.py 2 file.xlsx
+    if args and args[0] in ("1", "2"):
+        parallel_mode = args[0]
+        os.environ['PARALLEL_CHROME'] = f"{parallel_mode}/2"
+        print(f"🔀 PARALLEL MODE: Chrome {parallel_mode}/2")
+        if parallel_mode == "1":
+            print("   → Xử lý: scenes 1,3,5,7,... + ảnh nv*/loc*")
+        else:
+            print("   → Xử lý: scenes 2,4,6,8,...")
+        print()
+        args = args[1:]  # Remove parallel arg
+
     # Get Excel path
-    if len(sys.argv) >= 2:
-        excel_path = Path(sys.argv[1])
+    if args:
+        excel_path = Path(args[0])
     else:
         log("No file specified, opening file dialog...")
         excel_path = select_excel_file()
 
     if not excel_path:
         log("No file selected. Exiting.")
-        print("\nUsage: python run_worker_basic.py path/to/excel_prompts.xlsx")
+        print("\nUsage:")
+        print("  python run_worker_basic.py file.xlsx       # Chạy 1 Chrome")
+        print("  python run_worker_basic.py 1 file.xlsx     # Chrome 1 (scenes lẻ)")
+        print("  python run_worker_basic.py 2 file.xlsx     # Chrome 2 (scenes chẵn)")
         return
 
     # Validate file
