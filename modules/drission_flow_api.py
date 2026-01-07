@@ -692,19 +692,30 @@ JS_SELECT_T2V_MODE_STEP2 = '''
 # T2V Mode - Bước 3: Tìm và click option "Từ văn bản sang video"
 JS_SELECT_T2V_MODE_STEP3 = '''
 (function() {
-    var allSpans = document.querySelectorAll('span');
-    for (var el of allSpans) {
+    // Tìm trong tất cả elements, không chỉ span
+    var allElements = document.querySelectorAll('span, div, li, button, a');
+    for (var el of allElements) {
         var text = (el.textContent || '').trim();
-        // Tìm "Từ văn bản sang video" hoặc "Generate video from text"
+        // Tìm exact match hoặc partial match
         if (text === 'Từ văn bản sang video' ||
             text === 'Generate video from text' ||
-            text.includes('văn bản sang video')) {
+            text === 'Text to video') {
             el.click();
-            console.log('[T2V] Clicked: Tu van ban sang video');
+            console.log('[T2V] Clicked: ' + text);
             return 'CLICKED';
         }
     }
-    return 'NOT_FOUND';
+    // Log các options tìm thấy để debug
+    var options = [];
+    var spans = document.querySelectorAll('span');
+    for (var s of spans) {
+        var t = (s.textContent || '').trim();
+        if (t.length > 5 && t.length < 50 && (t.includes('video') || t.includes('Video'))) {
+            options.push(t);
+        }
+    }
+    console.log('[T2V] Available video options:', options);
+    return 'NOT_FOUND:' + options.join('|');
 })();
 '''
 
