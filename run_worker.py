@@ -196,18 +196,36 @@ def scan_master_projects() -> list:
     """Scan master PROJECTS folder for pending projects."""
     pending = []
 
+    print(f"  [DEBUG] Checking: {MASTER_PROJECTS}")
+
     if not MASTER_PROJECTS.exists():
         print(f"  ⚠️ Master PROJECTS not accessible: {MASTER_PROJECTS}")
         return pending
 
-    for item in MASTER_PROJECTS.iterdir():
-        if item.is_dir():
-            code = item.name
-            # Skip if already in VISUAL
-            if not is_project_complete_on_master(code):
-                # Check if has Excel with prompts
-                if has_excel_with_prompts(item, code):
-                    pending.append(code)
+    # List all folders
+    all_folders = [item for item in MASTER_PROJECTS.iterdir() if item.is_dir()]
+    print(f"  [DEBUG] Found {len(all_folders)} folders in MASTER_PROJECTS")
+
+    for item in all_folders:
+        code = item.name
+
+        # Skip if already in VISUAL
+        if is_project_complete_on_master(code):
+            print(f"    - {code}: already in VISUAL ✓")
+            continue
+
+        # Check if has Excel (có thể chưa có prompts)
+        excel_path = item / f"{code}_prompts.xlsx"
+        if not excel_path.exists():
+            print(f"    - {code}: no Excel file")
+            continue
+
+        # Check if has prompts
+        if has_excel_with_prompts(item, code):
+            print(f"    - {code}: ready (has prompts) ✓")
+            pending.append(code)
+        else:
+            print(f"    - {code}: Excel exists but no prompts yet")
 
     return sorted(pending)
 
@@ -220,19 +238,24 @@ def sync_local_to_visual() -> int:
     Returns:
         Số lượng projects đã copy
     """
+    print(f"  [DEBUG] Checking local: {LOCAL_PROJECTS}")
+
     if not LOCAL_PROJECTS.exists():
+        print(f"  [DEBUG] Local PROJECTS folder does not exist")
         return 0
+
+    # List all folders
+    all_folders = [item for item in LOCAL_PROJECTS.iterdir() if item.is_dir()]
+    print(f"  [DEBUG] Found {len(all_folders)} local project folders")
 
     copied = 0
 
-    for item in LOCAL_PROJECTS.iterdir():
-        if not item.is_dir():
-            continue
-
+    for item in all_folders:
         code = item.name
 
         # Skip nếu đã có trong VISUAL
         if is_project_complete_on_master(code):
+            print(f"    - {code}: already in VISUAL ✓")
             continue
 
         # Check local có ảnh không
@@ -240,6 +263,8 @@ def sync_local_to_visual() -> int:
             print(f"  📤 Found local project with images: {code}")
             if copy_to_visual(code, item):
                 copied += 1
+        else:
+            print(f"    - {code}: no images yet")
 
     return copied
 
