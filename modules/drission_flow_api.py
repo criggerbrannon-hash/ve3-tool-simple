@@ -3121,6 +3121,12 @@ class DrissionFlowAPI:
                         operation = response['operations'][0]
                         self.log(f"[T2V→I2V] ✓ Video operation started")
 
+                        # Refresh token từ browser (Chrome vừa gửi video request với token fresh)
+                        fresh_token = self.driver.run_js("return window._tk;")
+                        if fresh_token:
+                            self.bearer_token = f"Bearer {fresh_token}"
+                            self.log(f"[T2V→I2V] ✓ Refreshed bearer token")
+
                         # Build headers cho polling
                         headers = {
                             "Authorization": self.bearer_token,
