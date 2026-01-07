@@ -130,32 +130,36 @@ def delete_local_project(code: str):
 
 
 def copy_from_master(code: str) -> Path:
-    """Copy project from master to local."""
+    """Copy project from master to local (or return local if already exists)."""
     src = MASTER_PROJECTS / code
     dst = LOCAL_PROJECTS / code
-
-    if not src.exists():
-        print(f"  ❌ Source not found: {src}")
-        return None
 
     # Create local PROJECTS dir
     LOCAL_PROJECTS.mkdir(parents=True, exist_ok=True)
 
-    # Copy if not exists or update
-    if not dst.exists():
-        print(f"  📥 Copying from master: {code}")
-        shutil.copytree(src, dst)
-        print(f"  ✅ Copied to: {dst}")
-        # Cleanup: delete from master after successful copy
-        delete_master_source(code)
-    else:
-        # Check if Excel updated on master
-        excel_src = src / f"{code}_prompts.xlsx"
-        excel_dst = dst / f"{code}_prompts.xlsx"
-        if excel_src.exists():
-            if not excel_dst.exists() or excel_src.stat().st_mtime > excel_dst.stat().st_mtime:
-                shutil.copy2(excel_src, excel_dst)
-                print(f"  📥 Updated Excel from master")
+    # If local already exists, use it (even if master was deleted)
+    if dst.exists():
+        print(f"  📂 Using existing local: {code}")
+        # Try to update Excel from master if available
+        if src.exists():
+            excel_src = src / f"{code}_prompts.xlsx"
+            excel_dst = dst / f"{code}_prompts.xlsx"
+            if excel_src.exists():
+                if not excel_dst.exists() or excel_src.stat().st_mtime > excel_dst.stat().st_mtime:
+                    shutil.copy2(excel_src, excel_dst)
+                    print(f"  📥 Updated Excel from master")
+        return dst
+
+    # Local doesn't exist, need to copy from master
+    if not src.exists():
+        print(f"  ❌ Source not found: {src}")
+        return None
+
+    print(f"  📥 Copying from master: {code}")
+    shutil.copytree(src, dst)
+    print(f"  ✅ Copied to: {dst}")
+    # Cleanup: delete from master after successful copy
+    delete_master_source(code)
 
     return dst
 
@@ -263,6 +267,42 @@ def process_project(code: str, callback=None) -> bool:
     else:
         log(f"  ⚠️ No images created", "WARN")
         return False
+
+
+def scan_incomplete_local_projects() -> list:
+    """
+    Scan local PROJECTS for incomplete projects (có Excel nhưng chưa có ảnh).
+    Đây là các project đã copy về nhưng chưa xử lý xong.
+    """
+    incomplete = []
+
+    if not LOCAL_PROJECTS.exists():
+        return incomplete
+
+    for item in LOCAL_PROJECTS.iterdir():
+        if not item.is_dir():
+            continue
+
+        code = item.name
+
+        # Skip if not matching channel
+        if not matches_channel(code):
+            continue
+
+        # Skip if already in VISUAL
+        if is_project_complete_on_master(code):
+            continue
+
+        # Skip if already has images (complete)
+        if is_local_complete(item, code):
+            continue
+
+        # Check if has Excel with prompts (ready to process)
+        if has_excel_with_prompts(item, code):
+            print(f"    - {code}: incomplete (has Excel, no images) → will continue")
+            incomplete.append(code)
+
+    return sorted(incomplete)
 
 
 def scan_master_projects() -> list:
@@ -390,8 +430,14 @@ def run_scan_loop():
         if synced > 0:
             print(f"  📤 Synced {synced} local projects to VISUAL")
 
+        # Find incomplete local projects (đã copy về nhưng chưa xong)
+        incomplete_local = scan_incomplete_local_projects()
+
         # Find pending projects from master
-        pending = scan_master_projects()
+        pending_master = scan_master_projects()
+
+        # Merge: incomplete local + pending master (loại bỏ duplicate)
+        pending = list(dict.fromkeys(incomplete_local + pending_master))
 
         if not pending:
             print(f"  No pending projects")
