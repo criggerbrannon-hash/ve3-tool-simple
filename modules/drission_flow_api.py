@@ -2929,15 +2929,15 @@ class DrissionFlowAPI:
         try:
             textarea.clear()
             textarea.input(prompt[:500])
-            time.sleep(0.3)
         except Exception as e:
             self.log(f"[I2V-FORCE] Không thể nhập prompt: {e}", "WARN")
 
-        # 5. Click nút Tạo (trigger Chrome gửi request - Interceptor sẽ đổi thành video)
-        self.log("[I2V-FORCE] Click 'Tạo' → Interceptor đổi thành VIDEO request...")
-        clicked = self._click_generate_button()
-        if not clicked:
-            return False, None, "Không click được nút Tạo"
+        # Đợi reCAPTCHA chuẩn bị token
+        time.sleep(2)
+
+        # 5. Nhấn Enter để gửi (trigger Chrome gửi request - Interceptor đổi thành video)
+        self.log("[I2V-FORCE] → Pressed Enter, Interceptor đổi thành VIDEO request...")
+        textarea.input('\n')
 
         # 6. Đợi VIDEO response (từ Interceptor)
         start_time = time.time()
@@ -3084,15 +3084,15 @@ class DrissionFlowAPI:
         try:
             textarea.clear()
             textarea.input(prompt[:500])
-            time.sleep(0.3)
         except Exception as e:
             self.log(f"[T2V→I2V] Không thể nhập prompt: {e}", "WARN")
 
-        # 5. Click nút Tạo (trigger Chrome gửi T2V request - Interceptor sẽ convert thành I2V)
-        self.log("[T2V→I2V] Click 'Tạo' → Chrome gửi T2V → Interceptor convert → I2V...")
-        clicked = self._click_generate_button()
-        if not clicked:
-            return False, None, "Không click được nút Tạo"
+        # Đợi reCAPTCHA chuẩn bị token
+        time.sleep(2)
+
+        # 5. Nhấn Enter để gửi (trigger Chrome gửi T2V request - Interceptor convert thành I2V)
+        self.log("[T2V→I2V] → Pressed Enter, Chrome gửi T2V → Interceptor convert → I2V...")
+        textarea.input('\n')
 
         # 6. Đợi VIDEO response (từ Interceptor sau khi convert T2V → I2V)
         start_time = time.time()
@@ -3268,15 +3268,15 @@ class DrissionFlowAPI:
         try:
             textarea.clear()
             textarea.input(prompt[:500])
-            time.sleep(0.3)
         except Exception as e:
             self.log(f"[T2V-PURE] Không thể nhập prompt: {e}", "WARN")
 
-        # 4. Click nút Tạo (trigger Chrome gửi T2V request thuần)
-        self.log("[T2V-PURE] Click 'Tạo' → Chrome gửi batchAsyncGenerateVideoText...")
-        clicked = self._click_generate_button()
-        if not clicked:
-            return False, None, "Không click được nút Tạo"
+        # Đợi reCAPTCHA chuẩn bị token
+        time.sleep(2)
+
+        # 4. Nhấn Enter để gửi (trigger Chrome gửi T2V request thuần)
+        self.log("[T2V-PURE] → Pressed Enter, Chrome gửi batchAsyncGenerateVideoText...")
+        textarea.input('\n')
 
         # 5. Đợi VIDEO response (T2V thuần)
         start_time = time.time()
