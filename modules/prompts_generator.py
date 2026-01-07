@@ -3423,6 +3423,13 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                 # Lấy planned_duration từ đạo diễn (nếu có)
                 # Nếu không có, tính từ srt_range
                 planned_duration = shot.get("planned_duration")
+
+                # DEBUG: Log xem AI có trả về planned_duration không
+                if planned_duration:
+                    self.logger.debug(f"Shot {scene_id}: AI returned planned_duration={planned_duration}")
+                else:
+                    self.logger.warning(f"Shot {scene_id}: AI did NOT return planned_duration, will calculate from timestamps")
+
                 if not planned_duration:
                     # Fallback: tính từ timestamps
                     try:
