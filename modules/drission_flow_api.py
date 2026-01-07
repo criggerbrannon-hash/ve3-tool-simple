@@ -2094,10 +2094,17 @@ class DrissionFlowAPI:
                         self.switch_to_fallback_model()
                         force_model = "GEM_PIX"  # Override cho các lần retry sau
 
-                    # Retry với nano banana (đợi ngắn, không close Chrome)
-                    self.log(f"⚠️ 429 Quota - Dùng Nano Banana, đợi 5s rồi retry...", "WARN")
+                    # Retry với nano banana: đợi 5s → F5 refresh → retry
                     if attempt < max_retries - 1:
+                        self.log(f"⚠️ 429 Quota - Đợi 5s, F5 refresh rồi retry...", "WARN")
                         time.sleep(5)
+                        # F5 refresh page
+                        try:
+                            self.driver.refresh()
+                            time.sleep(3)  # Đợi page load
+                            self.log(f"  → F5 refreshed, retry...")
+                        except Exception as e:
+                            self.log(f"  → Refresh failed: {e}", "WARN")
                         continue
 
                     # Hết retry trong hàm này, nhưng KHÔNG return False
