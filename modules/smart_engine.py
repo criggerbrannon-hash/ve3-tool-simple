@@ -2123,7 +2123,8 @@ class SmartEngine:
         self,
         input_path: str,
         output_dir: str = None,
-        callback: Callable = None
+        callback: Callable = None,
+        skip_compose: bool = False
     ) -> Dict:
         """
         BROWSER MODE PIPELINE - Tao anh bang JS automation.
@@ -2139,6 +2140,7 @@ class SmartEngine:
             input_path: Voice file (.mp3, .wav) hoac Excel (.xlsx)
             output_dir: Thu muc output (optional)
             callback: Ham log callback
+            skip_compose: Bo qua buoc ghep video (chi tao anh)
 
         Returns:
             Dict with success/failed counts
@@ -2729,16 +2731,20 @@ class SmartEngine:
         self._close_browser()
 
         # === 11. COMPOSE VIDEO (sau khi retry xong) ===
-        self.log("[STEP 11] Ghep video...")
-        if results.get("failed", 0) > 0:
-            self.log(f"  CANH BAO: {results['failed']} anh fail, nhung van ghep video voi anh co san!", "WARN")
-
-        video_path = self._compose_video(proj_dir, excel_path, name)
-        if video_path:
-            self.log(f"  -> Video: {video_path.name}", "OK")
-            results["video"] = str(video_path)
+        if skip_compose:
+            self.log("[STEP 11] Skip ghep video (skip_compose=True)")
+            results["skipped_compose"] = True
         else:
-            self.log("  Video composer khong kha dung hoac thieu file", "WARN")
+            self.log("[STEP 11] Ghep video...")
+            if results.get("failed", 0) > 0:
+                self.log(f"  CANH BAO: {results['failed']} anh fail, nhung van ghep video voi anh co san!", "WARN")
+
+            video_path = self._compose_video(proj_dir, excel_path, name)
+            if video_path:
+                self.log(f"  -> Video: {video_path.name}", "OK")
+                results["video"] = str(video_path)
+            else:
+                self.log("  Video composer khong kha dung hoac thieu file", "WARN")
 
         return results
 
