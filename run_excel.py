@@ -275,9 +275,14 @@ def process_voice_to_excel(voice_path: Path) -> bool:
 
 
 def scan_voice_folder(voice_dir: Path) -> list:
-    """Scan voice folder for mp3 files in subdirectories."""
+    """Scan voice folder for audio files (root + subdirectories)."""
     voice_extensions = {'.mp3', '.wav', '.m4a', '.flac', '.ogg'}
     voice_files = []
+
+    # Scan files directly in voice_dir (root level)
+    for f in voice_dir.iterdir():
+        if f.is_file() and f.suffix.lower() in voice_extensions:
+            voice_files.append(f)
 
     # Scan subdirectories (1 level deep)
     for subdir in voice_dir.iterdir():
