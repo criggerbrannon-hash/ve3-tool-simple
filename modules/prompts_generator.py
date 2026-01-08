@@ -928,14 +928,21 @@ class PromptGenerator:
             True nếu thành công
         """
         project_dir = Path(project_dir)
-        
-        # Paths
-        srt_path = project_dir / "srt" / f"{code}.srt"
-        excel_path = project_dir / "prompts" / f"{code}_prompts.xlsx"
-        
-        # Kiểm tra SRT file
-        if not srt_path.exists():
-            self.logger.error(f"SRT file không tồn tại: {srt_path}")
+
+        # Paths - support both flat (PROJECTS) and nested structure
+        # Flat: PROJECTS/{code}/{code}.srt
+        # Nested: {project}/srt/{code}.srt
+        srt_path_flat = project_dir / f"{code}.srt"
+        srt_path_nested = project_dir / "srt" / f"{code}.srt"
+
+        if srt_path_flat.exists():
+            srt_path = srt_path_flat
+            excel_path = project_dir / f"{code}_prompts.xlsx"
+        elif srt_path_nested.exists():
+            srt_path = srt_path_nested
+            excel_path = project_dir / "prompts" / f"{code}_prompts.xlsx"
+        else:
+            self.logger.error(f"SRT file không tồn tại: {srt_path_flat} hoặc {srt_path_nested}")
             return False
         
         # Load hoặc tạo Excel
@@ -978,8 +985,26 @@ class PromptGenerator:
         
         self.logger.info(f"Tìm thấy {len(srt_entries)} SRT entries")
 
+        # === ĐỌC TXT FILE (nguồn chính cho story content) ===
+        # TXT chứa nội dung đầy đủ hơn SRT, dùng để đạo diễn hiểu tổng thể
+        txt_path = project_dir / f"{code}.txt"
+        txt_content = ""
+        if txt_path.exists():
+            try:
+                with open(txt_path, 'r', encoding='utf-8') as f:
+                    txt_content = f.read().strip()
+                self.logger.info(f"Đọc TXT file: {txt_path.name} ({len(txt_content)} chars)")
+            except Exception as e:
+                self.logger.warning(f"Không thể đọc TXT: {e}")
+
         # Tạo full story text để phân tích
-        full_story = " ".join([e.text for e in srt_entries])
+        # Ưu tiên TXT (đầy đủ hơn), fallback về SRT text
+        if txt_content:
+            full_story = txt_content
+            self.logger.info("[STORY] Sử dụng TXT làm nguồn chính")
+        else:
+            full_story = " ".join([e.text for e in srt_entries])
+            self.logger.info("[STORY] Không có TXT, dùng SRT text")
 
         # Step 1: Phân tích nhân vật + bối cảnh
         # (Luôn phân tích để có context, nhưng chỉ lưu vào Excel nếu chưa có)
@@ -1213,7 +1238,9 @@ Trả về JSON:"""
                                 else:
                                     srt_start = str(original_scene.get("srt_start", "00:00:00,000"))
                                     srt_end = str(original_scene.get("srt_end", "00:00:00,000"))
-                                    duration = original_scene.get("duration", 5.0)
+                                    # Random duration 5-8 giây cho video clips
+                                    import random
+                                    duration = random.uniform(5.0, 8.0)
 
                                 chars_used = ai_scene.get("characters", ["nvc"])
                                 backup_scenes_data.append({
@@ -2350,7 +2377,8 @@ Trả về JSON:"""
         self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
         self.logger.info("=" * 50)
 
-        response = self._generate_content_large(prompt, temperature=0.4, max_tokens=8192)
+        # Temperature 0.5 để AI đa dạng hơn với planned_duration (không uniform 5s)
+        response = self._generate_content_large(prompt, temperature=0.5, max_tokens=8192)
 
         self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
         if response:
@@ -2557,7 +2585,8 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                     import time
                     time.sleep(2)
 
-                response = self._generate_content_large(pass2_prompt, temperature=0.4, max_tokens=8000)
+                # Temperature 0.5 để planned_duration đa dạng hơn
+                response = self._generate_content_large(pass2_prompt, temperature=0.5, max_tokens=8000)
 
                 if response:
                     json_data = self._extract_json(response)
@@ -3254,7 +3283,9 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
         else:
             srt_start = str(scene.get("srt_start", "00:00:00,000"))
             srt_end = str(scene.get("srt_end", "00:00:00,000"))
-            duration = scene.get("duration", 5.0)
+            # Random duration 5-8 giây cho video clips
+            import random
+            duration = random.uniform(5.0, 8.0)
 
         # Simple shot type detection
         shot_type = "Medium shot"
@@ -3412,6 +3443,13 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                 # Lấy planned_duration từ đạo diễn (nếu có)
                 # Nếu không có, tính từ srt_range
                 planned_duration = shot.get("planned_duration")
+
+                # DEBUG: Log xem AI có trả về planned_duration không
+                if planned_duration:
+                    self.logger.debug(f"Shot {scene_id}: AI returned planned_duration={planned_duration}")
+                else:
+                    self.logger.warning(f"Shot {scene_id}: AI did NOT return planned_duration, will calculate from timestamps")
+
                 if not planned_duration:
                     # Fallback: tính từ timestamps
                     try:
