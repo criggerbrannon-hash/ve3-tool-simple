@@ -225,6 +225,17 @@ class MultiAIClient:
                             else:
                                 break
                         continue
+                    elif any(kw in error_str for kw in ["prematurely", "connection", "timeout", "network", "reset", "eof", "closed"]):
+                        # Connection error - retry with delay
+                        self.logger.warning(f"DeepSeek connection error ({attempt+1}/{max_retries}): {e}")
+                        if attempt < max_retries - 1:
+                            wait_time = 5 * (attempt + 1)  # 5s, 10s, 15s
+                            self.logger.info(f"Waiting {wait_time}s before retry...")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            self.logger.error(f"DeepSeek max retries reached for connection error")
+                            break
                     else:
                         self.logger.error(f"DeepSeek error: {e}")
                         break
