@@ -1582,31 +1582,29 @@ class DrissionFlowAPI:
             pyperclip.copy(prompt)
             time.sleep(0.1)
 
-            # Click vào textarea để focus
-            try:
-                textarea.click()
-                time.sleep(0.2)
-            except:
-                pass
+            # QUAN TRỌNG: Dùng JS click để click chính xác vào textarea
+            # DrissionPage click() có thể không focus đúng
+            self._click_textarea()
+            time.sleep(0.3)
 
-            # Clear textarea trước (select all + delete)
-            try:
-                # Ctrl+A để select all
-                textarea.input('\ue009a')  # Ctrl+A
-                time.sleep(0.1)
-                # Delete để xóa
-                textarea.input('\ue017')  # Delete key
-                time.sleep(0.1)
-            except:
-                # Fallback: dùng clear()
-                try:
-                    textarea.clear()
-                    time.sleep(0.1)
-                except:
-                    pass
+            # Clear textarea trước bằng JS (đáng tin cậy hơn)
+            self.driver.run_js("""
+                var textarea = document.querySelector('textarea');
+                if (textarea) {
+                    textarea.value = '';
+                    textarea.focus();
+                }
+            """)
+            time.sleep(0.2)
 
-            # Ctrl+V để paste
-            textarea.input('\ue009v')  # Ctrl+V
+            # Ctrl+V để paste - dùng actions của DrissionPage
+            try:
+                # Thử dùng keyboard shortcut
+                self.driver.actions.key_down('ctrl').send_keys('v').key_up('ctrl').perform()
+            except:
+                # Fallback: dùng input với key code
+                textarea.input('\ue009v')  # Ctrl+V
+
             time.sleep(0.3)
 
             self.log("✓ Paste prompt (Ctrl+V)")
@@ -1615,6 +1613,8 @@ class DrissionFlowAPI:
         except ImportError:
             self.log("⚠️ pyperclip not installed, falling back to input()", "WARN")
             # Fallback nếu không có pyperclip
+            self._click_textarea()
+            time.sleep(0.2)
             textarea.clear()
             time.sleep(0.2)
             textarea.input(prompt)
@@ -1623,6 +1623,8 @@ class DrissionFlowAPI:
             self.log(f"⚠️ Paste error: {e}, falling back to input()", "WARN")
             # Fallback
             try:
+                self._click_textarea()
+                time.sleep(0.2)
                 textarea.clear()
                 time.sleep(0.2)
                 textarea.input(prompt)
