@@ -75,20 +75,39 @@ def check_prompts(excel_path: Path, fix: bool = False):
     print()
 
     if fix:
-        print(f"\n🔧 ĐANG SỬA {len(invalid_scenes)} PROMPTS...\n")
-        fix_prompts(workbook, invalid_scenes)
+        print(f"\n🔧 ĐANG SỬA {len(invalid_scenes)} PROMPTS TỪ BACKUP...\n")
+
+        # Ưu tiên: Dùng backup từ director_plan (đã có sẵn trong Excel)
+        result = workbook.fix_invalid_prompts_from_backup()
+
+        print(f"\n📊 KẾT QUẢ:")
+        print(f"   ✅ Fixed từ backup: {result['fixed']}")
+        print(f"   ⏭️ Skipped (backup cũng lỗi): {result['skipped']}")
+        print(f"   ❌ Không có backup: {result['no_backup']}")
+
+        # Nếu còn scenes không fix được, dùng fallback
+        remaining = result['skipped'] + result['no_backup']
+        if remaining > 0:
+            print(f"\n🔧 CÒN {remaining} SCENES KHÔNG CÓ BACKUP, ĐANG TẠO FALLBACK...")
+            fix_prompts_fallback(workbook)
     else:
         print(f"\n💡 ĐỂ SỬA, CHẠY:")
         print(f"   python run_fix_prompts.py \"{excel_path}\" --fix")
         print()
-        print(f"   HOẶC xóa Excel và chạy lại generate prompts:")
-        print(f"   python run_excel.py \"{excel_path}\"")
+        print(f"   Tool sẽ tự động:")
+        print(f"   1. Lấy backup từ director_plan (theo timestamp)")
+        print(f"   2. Nếu không có backup, tạo fallback từ SRT text")
 
 
-def fix_prompts(workbook: PromptWorkbook, invalid_scenes: list):
+def fix_prompts_fallback(workbook: PromptWorkbook):
     """
-    Sửa prompts bị lỗi bằng cách tạo prompt mới từ SRT text.
+    Fallback: Sửa prompts bị lỗi bằng cách tạo prompt mới từ SRT text.
+    Chỉ dùng khi không có backup trong director_plan.
     """
+    invalid_scenes = workbook.detect_invalid_prompts()
+    if not invalid_scenes:
+        print("   ✅ Không còn prompts lỗi!")
+        return
     import yaml
     from modules.prompts_generator import PromptGenerator
 
