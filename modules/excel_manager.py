@@ -1012,6 +1012,9 @@ class PromptWorkbook:
             total_planned = 0
             plans_done = 0
 
+        # Count invalid prompts
+        invalid_prompts = self.detect_invalid_prompts()
+
         return {
             "total_characters": len(characters),
             "total_scenes": len(scenes),
@@ -1024,4 +1027,51 @@ class PromptWorkbook:
             "total_planned": total_planned,
             "plans_done": plans_done,
             "scenes_missing": total_planned - len(scenes) if total_planned > 0 else 0,
+            # Invalid prompts
+            "invalid_prompts": len(invalid_prompts),
+            "invalid_scene_ids": [s.scene_id for s in invalid_prompts],
         }
+
+    def detect_invalid_prompts(self) -> List:
+        """
+        Detect scenes có prompts bị lỗi (chỉ có template, không có nội dung).
+
+        Returns:
+            List các Scene objects có prompts invalid
+        """
+        # Template patterns - prompts chỉ có style mà không có nội dung cụ thể
+        TEMPLATE_PATTERNS = [
+            "cinematic, 4k photorealistic",
+            "shot on arri alexa",
+            "medium shot, dramatic scene",
+            "subtle film grain",
+            "natural lighting with dramatic shadows",
+        ]
+
+        # Minimum meaningful content length (sau khi loại bỏ template text)
+        MIN_CONTENT_LENGTH = 50
+
+        invalid_scenes = []
+        scenes = self.get_scenes()
+
+        for scene in scenes:
+            prompt = (scene.img_prompt or "").lower().strip()
+
+            if not prompt:
+                invalid_scenes.append(scene)
+                continue
+
+            # Loại bỏ template text để kiểm tra nội dung thực
+            content = prompt
+            for pattern in TEMPLATE_PATTERNS:
+                content = content.replace(pattern.lower(), "")
+
+            # Loại bỏ các ký tự thừa
+            content = content.replace(",", " ").replace(".", " ").strip()
+            content = " ".join(content.split())  # Normalize whitespace
+
+            # Kiểm tra nếu prompt chỉ có template (không đủ nội dung)
+            if len(content) < MIN_CONTENT_LENGTH:
+                invalid_scenes.append(scene)
+
+        return invalid_scenes
