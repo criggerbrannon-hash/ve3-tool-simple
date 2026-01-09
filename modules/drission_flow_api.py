@@ -742,7 +742,7 @@ class DrissionFlowAPI:
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
         # Chrome portable - dùng Chrome đã đăng nhập sẵn
-        chrome_portable: str = "",  # Đường dẫn Chrome portable (VD: C:\KP\KP.exe)
+        chrome_portable: str = "",  # Đường dẫn Chrome portable (VD: C:\ve3\chrome.exe)
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -1137,7 +1137,7 @@ class DrissionFlowAPI:
             options.set_local_port(self.chrome_port)
 
             # === AUTO DETECT CHROME PORTABLE ===
-            # Tự động tìm Chrome portable tại: C:\Users\{username}\Documents\KP\KP.exe
+            # Tự động tìm Chrome portable tại: C:\Users\{username}\Documents\ve3\chrome.exe
             chrome_exe = None
             user_data = None
             import platform
@@ -1148,25 +1148,28 @@ class DrissionFlowAPI:
                 chrome_exe = os.path.expandvars(self._chrome_portable)
                 chrome_dir = Path(chrome_exe).parent
                 self.log(f"[CHROME] Dùng chrome_portable: {chrome_exe}")
-                # User Data có thể ở: KP/User Data hoặc KP/Data/profile
+                # User Data có thể ở: ve3/User Data hoặc ve3/Data/profile
                 for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
                     if data_path.exists():
                         user_data = data_path
                         break
 
-            # 2. Tự động detect Chrome portable tại Documents\KP\KP.exe
+            # 2. Tự động detect Chrome portable tại Documents\ve3\chrome.exe
             if not chrome_exe and platform.system() == 'Windows':
                 home = Path.home()  # C:\Users\{username}
-                kp_chrome = home / "Documents" / "KP" / "KP.exe"
-                if kp_chrome.exists():
-                    chrome_exe = str(kp_chrome)
-                    kp_dir = kp_chrome.parent
-                    # Tìm User Data: KP/Data/profile hoặc KP/User Data
-                    for data_path in [kp_dir / "Data" / "profile", kp_dir / "User Data"]:
-                        if data_path.exists():
-                            user_data = data_path
-                            break
-                    self.log(f"[AUTO] Phat hien Chrome: {chrome_exe}")
+                # Thử các tên file chrome phổ biến
+                for chrome_name in ["chrome.exe", "Chrome.exe", "ve3.exe"]:
+                    ve3_chrome = home / "Documents" / "ve3" / chrome_name
+                    if ve3_chrome.exists():
+                        chrome_exe = str(ve3_chrome)
+                        ve3_dir = ve3_chrome.parent
+                        # Tìm User Data: ve3/Data/profile hoặc ve3/User Data
+                        for data_path in [ve3_dir / "Data" / "profile", ve3_dir / "User Data"]:
+                            if data_path.exists():
+                                user_data = data_path
+                                break
+                        self.log(f"[AUTO] Phat hien Chrome: {chrome_exe}")
+                        break
 
             # 3. Dùng Chrome portable nếu tìm thấy
             if chrome_exe:

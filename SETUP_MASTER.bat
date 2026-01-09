@@ -39,8 +39,15 @@ echo.
 echo [3/3] Kiem tra FFmpeg...
 where ffmpeg >nul 2>&1
 if %errorlevel% neq 0 (
-    :: Check if FFmpeg exists in tools folder
-    if exist "tools\ffmpeg\ffmpeg.exe" (
+    :: Check if FFmpeg exists in tools folder (with bin subfolder)
+    if exist "tools\ffmpeg\bin\ffmpeg.exe" (
+        echo [OK] Tim thay FFmpeg trong tools\ffmpeg\bin\
+        echo.
+        echo [!] Them vao PATH vinh vien...
+        setx PATH "%CD%\tools\ffmpeg\bin;%PATH%" >nul 2>&1
+        set "PATH=%CD%\tools\ffmpeg\bin;%PATH%"
+        echo [OK] Da them vao PATH
+    ) else if exist "tools\ffmpeg\ffmpeg.exe" (
         echo [OK] Tim thay FFmpeg trong tools\ffmpeg\
         echo.
         echo [!] Them vao PATH vinh vien...
@@ -50,11 +57,10 @@ if %errorlevel% neq 0 (
     ) else (
         echo [!] Chua co FFmpeg!
         echo.
-        echo     Cach 1: Tai va giai nen vao tools\ffmpeg\
-        echo            https://www.gyan.dev/ffmpeg/builds/
+        echo     Copy vao: tools\ffmpeg\bin\ffmpeg.exe
+        echo     Hoac:     tools\ffmpeg\ffmpeg.exe
         echo.
-        echo     Cach 2: Cai bang winget:
-        echo            winget install ffmpeg
+        echo     Tai tu: https://www.gyan.dev/ffmpeg/builds/
         echo.
         echo     Sau do chay lai SETUP_MASTER.bat
     )
