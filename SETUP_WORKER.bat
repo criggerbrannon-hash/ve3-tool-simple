@@ -44,16 +44,17 @@ if exist "GoogleChromePortable\GoogleChromePortable.exe" (
 )
 
 :: Try to install from .paf file
-if exist "GoogleChromePortable*.paf.exe" (
-    echo [*] Tim thay file cai dat GoogleChromePortable.paf
-    echo     Dang cai dat Chrome Portable...
-    for %%f in (GoogleChromePortable*.paf.exe) do (
-        "%%f" /DESTINATION="%CD%\GoogleChromePortable" /SILENT
-        if exist "GoogleChromePortable\GoogleChromePortable.exe" (
-            echo [OK] Da cai Chrome Portable thanh cong!
-            echo     %CD%\GoogleChromePortable\GoogleChromePortable.exe
-            goto :check_done
-        )
+for %%f in (GoogleChromePortable*.paf.exe) do (
+    echo [*] Tim thay file cai dat: %%f
+    echo.
+    echo     Dang mo trinh cai dat Chrome Portable...
+    echo     Hay chon thu muc cai dat la: %CD%
+    echo.
+    start /wait "" "%%f"
+    if exist "GoogleChromePortable\GoogleChromePortable.exe" (
+        echo [OK] Da cai Chrome Portable thanh cong!
+        echo     %CD%\GoogleChromePortable\GoogleChromePortable.exe
+        goto :check_done
     )
 )
 
