@@ -3404,18 +3404,33 @@ class BrowserFlowGenerator:
                         import openpyxl
                         wb = openpyxl.load_workbook(excel_path)
                         if 'config' not in wb.sheetnames:
-                            wb.create_sheet('config')
-                        ws = wb['config']
+                            ws = wb.create_sheet('config')
+                            # Thêm header row
+                            ws['A1'] = 'key'
+                            ws['B1'] = 'value'
+                        else:
+                            ws = wb['config']
+                            # Đảm bảo có header
+                            if not ws['A1'].value:
+                                ws['A1'] = 'key'
+                                ws['B1'] = 'value'
 
                         # Tìm hoặc thêm row cho flow_project_url
                         found = False
-                        for row_num in range(2, ws.max_row + 1):
-                            if ws.cell(row=row_num, column=1).value == 'flow_project_url':
+                        for row_num in range(2, min(ws.max_row + 1, 50)):  # Giới hạn 50 rows
+                            cell_val = ws.cell(row=row_num, column=1).value
+                            if cell_val and str(cell_val).strip().lower() == 'flow_project_url':
                                 ws.cell(row=row_num, column=2, value=new_project_url)
                                 found = True
                                 break
                         if not found:
-                            next_row = ws.max_row + 1
+                            # Tìm row trống đầu tiên (sau header)
+                            next_row = 2
+                            for r in range(2, 50):
+                                if not ws.cell(row=r, column=1).value:
+                                    next_row = r
+                                    break
+                                next_row = r + 1
                             ws.cell(row=next_row, column=1, value='flow_project_url')
                             ws.cell(row=next_row, column=2, value=new_project_url)
 
@@ -3423,13 +3438,20 @@ class BrowserFlowGenerator:
                         profile_path = str(drission_api.profile_dir) if hasattr(drission_api, 'profile_dir') else ''
                         if profile_path:
                             found = False
-                            for row_num in range(2, ws.max_row + 1):
-                                if ws.cell(row=row_num, column=1).value == 'chrome_profile_path':
+                            for row_num in range(2, min(ws.max_row + 1, 50)):
+                                cell_val = ws.cell(row=row_num, column=1).value
+                                if cell_val and str(cell_val).strip().lower() == 'chrome_profile_path':
                                     ws.cell(row=row_num, column=2, value=profile_path)
                                     found = True
                                     break
                             if not found:
-                                next_row = ws.max_row + 1
+                                # Tìm row trống đầu tiên
+                                next_row = 2
+                                for r in range(2, 50):
+                                    if not ws.cell(row=r, column=1).value:
+                                        next_row = r
+                                        break
+                                    next_row = r + 1
                                 ws.cell(row=next_row, column=1, value='chrome_profile_path')
                                 ws.cell(row=next_row, column=2, value=profile_path)
 
