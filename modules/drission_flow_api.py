@@ -1160,24 +1160,27 @@ class DrissionFlowAPI:
 
             # 2. Tự động detect Chrome portable
             if not chrome_exe and platform.system() == 'Windows':
-                ve3_locations = []
+                chrome_locations = []
 
-                # 2a. Ưu tiên: Thư mục tool/ve3/ve3.exe
+                # 2a. Ưu tiên: Thư mục tool/GoogleChromePortable/GoogleChromePortable.exe
                 tool_dir = Path(__file__).parent.parent  # ve3-tool-simple/
-                ve3_locations.append(tool_dir / "ve3" / "ve3.exe")
+                chrome_locations.append(tool_dir / "GoogleChromePortable" / "GoogleChromePortable.exe")
 
-                # 2b. Fallback: Documents\ve3\
+                # 2b. Fallback: Documents\GoogleChromePortable\
                 home = Path.home()
+                chrome_locations.append(home / "Documents" / "GoogleChromePortable" / "GoogleChromePortable.exe")
+
+                # 2c. Legacy paths (ve3)
                 for chrome_name in ["ve3.exe", "chrome.exe", "Chrome.exe"]:
-                    ve3_locations.append(home / "Documents" / "ve3" / chrome_name)
+                    chrome_locations.append(home / "Documents" / "ve3" / chrome_name)
 
                 # Tìm Chrome portable
-                for ve3_chrome in ve3_locations:
-                    if ve3_chrome.exists():
-                        chrome_exe = str(ve3_chrome)
-                        ve3_dir = ve3_chrome.parent
-                        # Tìm User Data: ve3/Data/profile hoặc ve3/User Data
-                        for data_path in [ve3_dir / "Data" / "profile", ve3_dir / "User Data"]:
+                for chrome_path in chrome_locations:
+                    if chrome_path.exists():
+                        chrome_exe = str(chrome_path)
+                        chrome_dir = chrome_path.parent
+                        # Tìm User Data: Data/profile hoặc User Data
+                        for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
                             if data_path.exists():
                                 user_data = data_path
                                 break
