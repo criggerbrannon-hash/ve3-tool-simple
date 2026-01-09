@@ -368,8 +368,27 @@ def login_google_chrome(account_info: dict) -> bool:
         except Exception as e:
             log(f"Password step error: {e}", "WARN")
 
+        # === BƯỚC 3: CHỌN CHẾ ĐỘ LOGIN (Tab Tab Enter) ===
+        log("Selecting login mode (Tab Tab Enter)...")
+        try:
+            time.sleep(3)  # Đợi trang load
+            from DrissionPage.common import Actions
+            actions = Actions(driver)
+
+            # Tab 2 lần
+            actions.key_down('tab').key_up('tab')
+            time.sleep(0.2)
+            actions.key_down('tab').key_up('tab')
+            time.sleep(0.2)
+
+            # Enter để chọn
+            actions.key_down('enter').key_up('enter')
+            log("Sent Tab Tab Enter")
+        except Exception as e:
+            log(f"Tab Tab Enter error: {e}", "WARN")
+
         # Kiểm tra kết quả
-        time.sleep(2)
+        time.sleep(3)
         if "myaccount.google.com" in driver.url or "google.com" in driver.url:
             if "signin" not in driver.url and "challenge" not in driver.url:
                 log("Login successful!", "OK")

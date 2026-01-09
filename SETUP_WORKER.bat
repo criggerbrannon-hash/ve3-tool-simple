@@ -118,16 +118,12 @@ echo   - Cot B: Email
 echo   - Cot C: Password
 echo.
 
-set /p LOGIN_CHOICE="Ban co muon dang nhap Google khong? (Y/N): "
-if /i "%LOGIN_CHOICE%"=="Y" (
-    echo.
-    echo [*] Dang chay google_login.py...
-    python google_login.py
-    if %errorlevel% equ 0 (
-        echo [OK] Dang nhap thanh cong!
-    ) else (
-        echo [!] Dang nhap that bai hoac can xac thuc them
-    )
+echo [*] Dang chay google_login.py...
+python google_login.py
+if %errorlevel% equ 0 (
+    echo [OK] Dang nhap thanh cong!
+) else (
+    echo [!] Dang nhap that bai hoac can xac thuc them
 )
 
 :setup_done
