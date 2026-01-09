@@ -3147,7 +3147,13 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
             elif any(kw in entry_text_lower for kw in ['giận', 'angry', 'mad']):
                 visual_cue = "intense moment, dramatic lighting"
 
-            img_prompt = f"{base_style}, {shot_type}, {visual_cue}, dramatic scene, subtle film grain (reference: nvc.png)"
+            # Thêm SRT context vào prompt (để AI biết minh họa cho nội dung gì)
+            # Dùng "Illustrating:" để AI hiểu đây là ngữ cảnh, không phải text cần vẽ
+            srt_context = entry.text[:150].strip() if entry.text else ""
+            if srt_context:
+                img_prompt = f"{base_style}, {shot_type}, {visual_cue}, dramatic scene, subtle film grain. Illustrating: [{srt_context}] (reference: nvc.png)"
+            else:
+                img_prompt = f"{base_style}, {shot_type}, {visual_cue}, dramatic scene, subtle film grain (reference: nvc.png)"
 
             shot = {
                 "shot_number": shot_num,
