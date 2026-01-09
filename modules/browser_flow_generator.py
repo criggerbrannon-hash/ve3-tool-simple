@@ -72,7 +72,8 @@ class BrowserFlowGenerator:
         headless: bool = False,
         verbose: bool = True,
         config_path: str = "config/settings.yaml",
-        worker_id: int = 0
+        worker_id: int = 0,
+        total_workers: int = 1
     ):
         """
         Khoi tao BrowserFlowGenerator.
@@ -84,6 +85,7 @@ class BrowserFlowGenerator:
             verbose: In log chi tiet
             config_path: Duong dan file config
             worker_id: Worker ID for parallel processing (affects proxy, Chrome port)
+            total_workers: Total number of workers (for window layout)
         """
         if not SELENIUM_AVAILABLE:
             raise ImportError(
@@ -96,6 +98,7 @@ class BrowserFlowGenerator:
         self.headless = headless
         self.verbose = verbose
         self.worker_id = worker_id  # For parallel processing
+        self.total_workers = total_workers  # For window layout
 
         # Load config
         self.config = {}
@@ -3081,6 +3084,7 @@ class BrowserFlowGenerator:
             webshare_enabled=ws_cfg.get('enabled', False),
             machine_id=ws_cfg.get('machine_id', 1),
             worker_id=self.worker_id,
+            total_workers=self.total_workers,  # Chia màn hình
             chrome_portable=self.config.get('chrome_portable', '')
         )
 
@@ -3336,6 +3340,7 @@ class BrowserFlowGenerator:
             log_callback=self._log,
             webshare_enabled=use_webshare,
             worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
+            total_workers=self.total_workers,  # Chia màn hình theo số workers
             headless=drission_headless,  # Chạy Chrome ẩn (default: True)
             machine_id=machine_id,  # Máy số mấy - tránh trùng session giữa các máy
             chrome_portable=chrome_portable  # Chrome portable đã đăng nhập

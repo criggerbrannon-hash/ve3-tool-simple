@@ -738,6 +738,7 @@ class DrissionFlowAPI:
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+        total_workers: int = 1,  # Tổng số workers (để chia màn hình)
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
         # Chrome portable - dùng Chrome đã đăng nhập sẵn
@@ -756,12 +757,14 @@ class DrissionFlowAPI:
             log_callback: Callback để log (msg, level)
             webshare_enabled: Dùng Webshare proxy pool (default True)
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+            total_workers: Tổng số workers (để chia màn hình: 1=full, 2=chia đôi, ...)
             headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
             machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session để tránh trùng
             chrome_portable: Đường dẫn Chrome portable đã đăng nhập sẵn (ưu tiên cao nhất)
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
+        self._total_workers = total_workers  # Tổng số workers để chia màn hình
         self._headless = headless  # Lưu setting headless
         self._machine_id = machine_id  # Máy số mấy (1-99)
         self._chrome_portable = chrome_portable  # Chrome portable path
@@ -1356,6 +1359,10 @@ class DrissionFlowAPI:
                     else:
                         raise chrome_err
 
+            # === WINDOW LAYOUT - Chia màn hình theo số workers ===
+            if not self._headless and self._total_workers > 0:
+                self._setup_window_layout()
+
             # Setup proxy auth nếu cần (CDP-based)
             if self._use_webshare and hasattr(self, '_proxy_auth') and self._proxy_auth:
                 self._setup_proxy_auth()
@@ -1615,6 +1622,96 @@ class DrissionFlowAPI:
             time.sleep(0.2)
             textarea.input(prompt)
             return True
+
+    def _setup_window_layout(self):
+        """
+        Thiết lập vị trí và kích thước Chrome window dựa trên worker_id và total_workers.
+
+        Layout:
+        - 1 worker: Full màn hình
+        - 2 workers: Chia đôi ngang (worker 0 = trái, worker 1 = phải)
+        - 3+ workers: Chia theo grid
+        """
+        try:
+            # Lấy kích thước màn hình từ JavaScript
+            screen_info = self.driver.run_js("""
+                return {
+                    width: window.screen.availWidth,
+                    height: window.screen.availHeight,
+                    left: window.screen.availLeft || 0,
+                    top: window.screen.availTop || 0
+                };
+            """)
+
+            if not screen_info:
+                # Fallback: assume 1920x1080
+                screen_info = {'width': 1920, 'height': 1080, 'left': 0, 'top': 0}
+
+            screen_w = screen_info.get('width', 1920)
+            screen_h = screen_info.get('height', 1080)
+            screen_left = screen_info.get('left', 0)
+            screen_top = screen_info.get('top', 0)
+
+            total = self._total_workers
+            worker = self.worker_id
+
+            if total <= 1:
+                # 1 worker: Full màn hình (maximize)
+                self.driver.set.window.max()
+                self.log(f"📐 Window: FULL SCREEN")
+            elif total == 2:
+                # 2 workers: Chia đôi ngang
+                win_w = screen_w // 2
+                win_h = screen_h
+                win_x = screen_left + (worker * win_w)
+                win_y = screen_top
+
+                self.driver.set.window.size(win_w, win_h)
+                self.driver.set.window.position(win_x, win_y)
+                pos_name = "LEFT" if worker == 0 else "RIGHT"
+                self.log(f"📐 Window: {pos_name} ({win_w}x{win_h} at {win_x},{win_y})")
+            elif total == 3:
+                # 3 workers: 2 trên + 1 dưới full
+                if worker < 2:
+                    # Top row: 2 windows
+                    win_w = screen_w // 2
+                    win_h = screen_h // 2
+                    win_x = screen_left + (worker * win_w)
+                    win_y = screen_top
+                else:
+                    # Bottom: 1 window full width
+                    win_w = screen_w
+                    win_h = screen_h // 2
+                    win_x = screen_left
+                    win_y = screen_top + screen_h // 2
+
+                self.driver.set.window.size(win_w, win_h)
+                self.driver.set.window.position(win_x, win_y)
+                self.log(f"📐 Window: Worker {worker} ({win_w}x{win_h} at {win_x},{win_y})")
+            else:
+                # 4+ workers: Grid 2xN
+                cols = 2
+                rows = (total + 1) // 2
+
+                col = worker % cols
+                row = worker // cols
+
+                win_w = screen_w // cols
+                win_h = screen_h // rows
+                win_x = screen_left + (col * win_w)
+                win_y = screen_top + (row * win_h)
+
+                self.driver.set.window.size(win_w, win_h)
+                self.driver.set.window.position(win_x, win_y)
+                self.log(f"📐 Window: Worker {worker} ({win_w}x{win_h} at {win_x},{win_y})")
+
+        except Exception as e:
+            self.log(f"⚠️ Window layout error: {e}", "WARN")
+            # Fallback: maximize
+            try:
+                self.driver.set.window.max()
+            except:
+                pass
 
     def _click_textarea(self):
         """

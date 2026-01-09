@@ -107,7 +107,7 @@ class SmartEngine:
     # Chi refresh khi API tra loi 401 (authentication error)
     # Dieu nay toi uu hon vi token thuong valid lau hon 50 phut
 
-    def __init__(self, config_path: str = None, assigned_profile: str = None, worker_id: int = 0):
+    def __init__(self, config_path: str = None, assigned_profile: str = None, worker_id: int = 0, total_workers: int = 1):
         """
         Initialize SmartEngine.
 
@@ -115,6 +115,7 @@ class SmartEngine:
             config_path: Path to accounts.json config file
             assigned_profile: Specific Chrome profile name to use (for parallel processing)
             worker_id: Worker ID for parallel processing (affects proxy selection, Chrome port)
+            total_workers: Total number of workers (for window layout: 1=full, 2=split, ...)
         """
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
@@ -137,6 +138,7 @@ class SmartEngine:
 
         # Worker ID for parallel processing (proxy, Chrome port)
         self.worker_id = worker_id
+        self.total_workers = total_workers  # Tổng số workers (để chia màn hình)
 
         # Resources
         self.profiles: List[Resource] = []
@@ -1676,7 +1678,8 @@ class SmartEngine:
                 headless=headless,
                 verbose=True,
                 config_path=str(settings_path),
-                worker_id=self.worker_id  # For parallel processing
+                worker_id=self.worker_id,  # For parallel processing
+                total_workers=self.total_workers  # For window layout
             )
 
             # === QUAN TRỌNG: Load project_id từ Excel khi chạy lại (RESUME MODE) ===
@@ -1927,7 +1930,8 @@ class SmartEngine:
                     profile_name=profile_name,
                     headless=headless,
                     verbose=True,
-                    worker_id=self.worker_id  # For parallel processing
+                    worker_id=self.worker_id,  # For parallel processing
+                    total_workers=self.total_workers  # For window layout
                 )
                 self._browser_generator = generator
                 # Restore project_id tu generator cu
@@ -2860,7 +2864,8 @@ class SmartEngine:
                         project_path=str(proj_dir),
                         verbose=True,
                         config_path=str(settings_path),
-                        worker_id=self.worker_id  # For parallel processing
+                        worker_id=self.worker_id,  # For parallel processing
+                        total_workers=self.total_workers  # For window layout
                     )
                     # Set config values
                     generator.config['flow_bearer_token'] = bearer_token
@@ -4032,7 +4037,8 @@ class SmartEngine:
                 headless=False,  # Hiển thị Chrome
                 verbose=True,
                 config_path=str(settings_path),
-                worker_id=self.worker_id
+                worker_id=self.worker_id,
+                total_workers=self.total_workers  # For window layout
             )
 
             # Gọi generate_from_prompts_auto với prompts=[]
@@ -4126,9 +4132,11 @@ class SmartEngine:
                     pass
 
                 drission_api = DrissionFlowAPI(
-                    headless=True,
+                    headless=True,  # Token extraction - chạy ẩn
                     verbose=False,
                     webshare_enabled=ws_cfg.get('enabled', False),
+                    worker_id=self.worker_id,
+                    total_workers=self.total_workers,
                     machine_id=ws_cfg.get('machine_id', 1),
                     chrome_portable=self.chrome_portable
                 )
@@ -4334,6 +4342,7 @@ class SmartEngine:
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
                     webshare_enabled=use_webshare,
                     worker_id=getattr(self, 'worker_id', 0),  # Giống image gen
+                    total_workers=getattr(self, 'total_workers', 1),  # Chia màn hình
                     headless=headless_mode,
                     machine_id=machine_id,  # Máy số mấy - tránh trùng session
                     chrome_portable=self.chrome_portable

@@ -309,7 +309,8 @@ def process_project(code: str, callback=None) -> bool:
     try:
         from modules.smart_engine import SmartEngine
 
-        engine = SmartEngine()
+        # Pass worker settings for window layout
+        engine = SmartEngine(worker_id=WORKER_ID, total_workers=TOTAL_WORKERS)
 
         # Find Excel path
         excel_path = local_dir / f"{code}_prompts.xlsx"
@@ -585,11 +586,32 @@ def run_single_project(code: str):
     process_project(code)
 
 
+# Global worker settings (set from command line)
+WORKER_ID = 0
+TOTAL_WORKERS = 1
+
+
 def main():
-    if len(sys.argv) >= 2:
+    global WORKER_ID, TOTAL_WORKERS
+
+    import argparse
+    parser = argparse.ArgumentParser(description='VE3 Worker - Image/Video Generation')
+    parser.add_argument('project', nargs='?', default=None, help='Project code to process')
+    parser.add_argument('--worker-id', type=int, default=0, help='Worker ID (0-based, for window layout)')
+    parser.add_argument('--total-workers', type=int, default=1, help='Total number of workers (1=full, 2=split, ...)')
+    args = parser.parse_args()
+
+    # Set global worker settings
+    WORKER_ID = args.worker_id
+    TOTAL_WORKERS = args.total_workers
+
+    if TOTAL_WORKERS > 1:
+        pos_name = ["FULL", "LEFT", "RIGHT", "TOP-LEFT", "TOP-RIGHT", "BOTTOM"][min(WORKER_ID, 5)]
+        print(f"[WORKER {WORKER_ID}/{TOTAL_WORKERS}] Window: {pos_name}")
+
+    if args.project:
         # Single project mode
-        code = sys.argv[1]
-        run_single_project(code)
+        run_single_project(args.project)
     else:
         # Scan loop mode
         run_scan_loop()
