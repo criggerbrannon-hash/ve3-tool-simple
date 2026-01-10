@@ -5262,56 +5262,61 @@ OUTPUT FORMAT (JSON only, không markdown):
         }
         cinematic_mood = emotion_cinematics.get(emotion, emotion_cinematics["neutral"])
 
-        prompt = f"""You are a professional cinematographer creating shot descriptions for a high-quality video.
+        # Scene summary từ bước phân tích
+        scene_summary = scene.get("summary", "")
 
-SCENE CONTEXT:
-- Narration/Content: "{srt_text[:300]}"
-- Duration: {duration:.1f}s → Create {num_shots} shot(s), each ~{shot_duration:.1f}s
-- Emotion/Mood: {emotion}
-- Scene Type: {scene_type}
+        prompt = f"""You are a professional film director creating VISUAL shot descriptions for a dramatic video.
 
-CHARACTER (MUST use exactly as described):
-- ID: {main_char}
-- Description: {char_desc}
-- Reference file: {main_char}.png
+=== STORY MOMENT ===
+NARRATION TEXT: "{srt_text}"
+SCENE SUMMARY: {scene_summary if scene_summary else "Visualize the narration above"}
+SCENE TYPE: {scene_type}
+EMOTIONAL TONE: {emotion}
 
-LOCATION:
-- ID: {location if location else "unspecified"}
-- Description: {loc_desc if loc_desc else "contextual setting based on narration"}
-{f"- Reference file: {location}.png" if location else ""}
+=== CHARACTER IN THIS SCENE ===
+CHARACTER ID: {main_char}
+APPEARANCE: {char_desc}
+{f"CHARACTER LOCK (exact look): {char_lock}" if char_lock else ""}
 
+=== SETTING ===
+LOCATION: {loc_desc if loc_desc else "Setting based on narration context"}
+{f"LOCATION LOCK: {loc_lock}" if loc_lock else ""}
+
+=== CINEMATIC REQUIREMENTS ===
 VISUAL STYLE: {global_style}
-CINEMATIC MOOD: {cinematic_mood}
+MOOD LIGHTING: {cinematic_mood}
+DURATION: {duration:.1f}s → {num_shots} shot(s)
 
-REQUIREMENTS:
-1. Each shot MUST be a detailed, professional cinematography description
-2. Include: camera angle, lens (mm), lighting, composition, character action/expression
-3. DO NOT include any text, dialogue, or words in the visual description
-4. Character MUST match the description exactly (age, appearance, clothing)
-5. Each shot should have a DIFFERENT camera angle/shot type for visual variety
-6. Add emotional depth through facial expressions, body language, and atmosphere
-7. End each prompt with the character reference: ({main_char}.png)
+=== CRITICAL RULES ===
+1. ILLUSTRATE THE STORY - Each shot must VISUALLY show what's happening in the narration
+2. CHARACTER ACTIONS - Show the character DOING something relevant to the narration (not just standing)
+3. EMOTIONAL EXPRESSION - Face must show {emotion} emotion with specific micro-expressions
+4. NO TEXT/WORDS in the image - describe visually, don't include dialogue
+5. DETAILED DESCRIPTION - Include specific details: clothing wrinkles, lighting direction, background elements
+6. REFERENCE FORMAT - End with: ({main_char}.png){f", ({location}.png)" if location else ""}
 
-SHOT TYPES to use:
-- WIDE SHOT (24mm): Establish location, show full body, environment context
-- MEDIUM SHOT (50mm): Waist-up, conversational, show gestures
-- CLOSE-UP (85mm): Face/emotion focus, intimate, detailed expressions
-- EXTREME CLOSE-UP (100mm macro): Eyes, hands, specific details
-- OVER-THE-SHOULDER: Perspective shot, connection between elements
-- LOW ANGLE: Power, dominance, dramatic effect
-- HIGH ANGLE: Vulnerability, overview, diminishing effect
+=== SHOT VARIETY ===
+- ESTABLISHING WIDE (24mm): Full environment + character, context setting
+- MEDIUM (50mm): Upper body, gestures, interaction with environment
+- CLOSE-UP (85mm): Face emotions, tears, expressions, shallow DOF
+- EXTREME CLOSE-UP (100mm): Eyes reflecting emotion, hands trembling, details
+- LOW ANGLE: Empowering, dramatic, larger than life
+- HIGH ANGLE: Vulnerable, small, overwhelmed
 
-OUTPUT FORMAT (JSON only, no markdown):
+=== OUTPUT FORMAT (JSON only) ===
 {{
   "shots": [
     {{
       "shot_type": "CLOSE-UP",
-      "img_prompt": "Close-up shot, 85mm portrait lens, [DETAILED character description with exact appearance], [specific facial expression matching emotion], [lighting description], [background blur/bokeh], {global_style}. Character reference: ({main_char}.png)"
+      "img_prompt": "[Shot type], [lens mm], [CHARACTER DESCRIPTION: age, ethnicity, hair, clothing], [SPECIFIC ACTION the character is doing], [FACIAL EXPRESSION matching {emotion}], [LIGHTING: {cinematic_mood}], [BACKGROUND/ENVIRONMENT], {global_style}, 4K cinematic. ({main_char}.png)"
     }}
   ]
 }}
 
-Create {num_shots} unique, high-quality cinematic shots that visually tell the story of: "{srt_text[:150]}"
+=== EXAMPLE HIGH-QUALITY PROMPT ===
+"Close-up shot, 85mm portrait lens, 35-year-old Asian man with salt-and-pepper hair and tired eyes, wearing a faded blue work shirt, his weathered hands gripping an old photograph, tears welling in his eyes as memories flood back, soft diffused window light casting gentle shadows on his face, bokeh background of a modest living room, photorealistic, 4K cinematic quality. (nvc.png)"
+
+NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summary if scene_summary else srt_text[:100]}"
 """
 
         shots = []
@@ -5381,55 +5386,90 @@ Create {num_shots} unique, high-quality cinematic shots that visually tell the s
         start_seconds: float,
         global_style: str
     ) -> list:
-        """Tạo shots fallback không cần API - chất lượng cao."""
+        """Tạo shots fallback không cần API - chất lượng cao, minh họa câu chuyện."""
         shots = []
         main_char = scene.get("main_character", "nvc")
         location = scene.get("location", "")
         srt_text = scene.get("srt_text", "")
         emotion = scene.get("emotion", "neutral")
+        summary = scene.get("summary", "")
+        scene_type = scene.get("scene_type", "FRAME_PRESENT")
 
-        # Shot types với lens info
+        # Shot types với lens info và purpose
         shot_configs = [
-            ("WIDE SHOT", "24mm wide-angle lens", "full body in environment, establishing shot"),
-            ("MEDIUM SHOT", "50mm standard lens", "waist-up framing, conversational distance"),
-            ("CLOSE-UP", "85mm portrait lens", "face and shoulders, emotional focus, shallow depth of field"),
-            ("EXTREME CLOSE-UP", "100mm macro lens", "detailed facial features, eyes reflecting emotion"),
-            ("LOW ANGLE", "35mm lens from below", "empowering perspective, dramatic presence"),
-            ("OVER-THE-SHOULDER", "50mm lens", "intimate perspective, connection to scene")
+            ("Close-up shot", "85mm portrait lens", "face and emotional expression, shallow depth of field, bokeh background"),
+            ("Medium shot", "50mm lens", "upper body showing gestures and body language, environmental context"),
+            ("Wide establishing shot", "24mm wide-angle lens", "full body in complete environment, context and atmosphere"),
+            ("Extreme close-up", "100mm macro lens", "eyes or hands detail, intense emotional focus, cinematic intimacy"),
+            ("Low angle shot", "35mm lens from below", "dramatic empowering perspective, character prominence"),
+            ("Over-the-shoulder shot", "50mm lens", "perspective view, connection to environment or memory")
         ]
 
-        # Emotion → cinematic description
-        emotion_cinematics = {
-            "sad": ("soft diffused lighting, muted blue-grey tones", "melancholic expression, downcast eyes, subtle tears"),
-            "happy": ("warm golden hour lighting, vibrant colors", "genuine warm smile, bright eyes, relaxed posture"),
-            "angry": ("harsh dramatic side-lighting, high contrast shadows", "intense furrowed brow, clenched jaw, fierce gaze"),
-            "fear": ("low-key lighting, cold blue undertones, deep shadows", "wide anxious eyes, tense shoulders, worried expression"),
-            "love": ("soft romantic backlighting, warm pink tones, lens flare", "tender loving gaze, soft smile, gentle expression"),
-            "neutral": ("natural balanced lighting, cinematic color grading", "contemplative expression, thoughtful gaze")
+        # Emotion → detailed cinematic description
+        emotion_map = {
+            "sad": {
+                "lighting": "soft diffused lighting from window, muted blue-grey color grading",
+                "expression": "tears welling in eyes, downturned lips, furrowed brow, looking down",
+                "atmosphere": "melancholic, heavy, contemplative silence"
+            },
+            "happy": {
+                "lighting": "warm golden hour sunlight, vibrant natural colors",
+                "expression": "genuine bright smile reaching the eyes, relaxed features, joyful gaze",
+                "atmosphere": "uplifting, warm, peaceful contentment"
+            },
+            "angry": {
+                "lighting": "harsh dramatic side-lighting, high contrast shadows, red undertones",
+                "expression": "intense furrowed brow, clenched jaw, fierce piercing gaze, flared nostrils",
+                "atmosphere": "tense, confrontational, explosive tension"
+            },
+            "fear": {
+                "lighting": "low-key lighting, cold blue tones, deep unsettling shadows",
+                "expression": "wide anxious eyes, pale complexion, tense shoulders, trembling",
+                "atmosphere": "dread, vulnerability, impending danger"
+            },
+            "love": {
+                "lighting": "soft romantic backlighting, warm pink tones, gentle lens flare",
+                "expression": "tender loving gaze, soft gentle smile, eyes full of affection",
+                "atmosphere": "intimate, warm, emotional connection"
+            },
+            "nostalgic": {
+                "lighting": "soft dreamy haze, warm sepia undertones, gentle diffusion",
+                "expression": "distant wistful gaze, slight melancholic smile, remembering",
+                "atmosphere": "bittersweet memory, passage of time, reflection"
+            },
+            "neutral": {
+                "lighting": "natural balanced lighting, cinematic color grading",
+                "expression": "contemplative thoughtful expression, observant gaze",
+                "atmosphere": "calm, observational, everyday moment"
+            }
         }
-        lighting, expression = emotion_cinematics.get(emotion, emotion_cinematics["neutral"])
+        mood = emotion_map.get(emotion, emotion_map["neutral"])
 
         # Build reference_files
         ref_files = [f"{main_char}.png"]
         if location:
             ref_files.append(f"{location}.png")
 
-        # Location annotation
-        loc_part = f", set in {location} ({location}.png)" if location else ""
+        # Location reference
+        loc_ref = f", ({location}.png)" if location else ""
+
+        # Story context để minh họa
+        story_context = summary if summary else srt_text[:100]
 
         current_time = start_seconds
         for i in range(num_shots):
             config = shot_configs[i % len(shot_configs)]
-            shot_type, lens_desc, framing = config
+            shot_type, lens_desc, framing_desc = config
             shot_end = current_time + shot_duration
 
-            # Tạo prompt chất lượng cao
+            # Tạo prompt chi tiết minh họa câu chuyện
             img_prompt = (
-                f"{shot_type}, {lens_desc}, {framing}. "
-                f"Character ({main_char}.png) with {expression}. "
-                f"{lighting}{loc_part}. "
-                f"{global_style}, 4K photorealistic, cinematic composition. "
-                f"Illustrating: {srt_text[:80]}"
+                f"{shot_type}, {lens_desc}, {framing_desc}. "
+                f"Character ({main_char}.png) {mood['expression']}. "
+                f"{mood['lighting']}. "
+                f"{mood['atmosphere']}. "
+                f"{global_style}, photorealistic, 4K cinematic quality{loc_ref}. "
+                f"Visualizing: {story_context}"
             )
 
             shot = {
