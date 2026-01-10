@@ -177,10 +177,18 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
 
     excel_path = project_dir / f"{name}_prompts.xlsx"
     director_plan_backup = []
+    original_excel_backup = None  # Backup toàn bộ Excel để khôi phục khi fail
 
     try:
-        # === BƯỚC 1: Backup director_plan trước khi làm gì ===
+        # === BƯỚC 1: Backup director_plan VÀ toàn bộ Excel trước khi làm gì ===
         if excel_path.exists():
+            # Backup toàn bộ file Excel
+            import shutil
+            backup_path = excel_path.with_suffix('.xlsx.backup')
+            shutil.copy2(excel_path, backup_path)
+            original_excel_backup = backup_path
+            print(f"  📋 Backed up Excel to {backup_path.name}")
+
             from modules.excel_manager import PromptWorkbook
             try:
                 wb = PromptWorkbook(str(excel_path))
@@ -188,6 +196,8 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
                 director_plan_backup = wb.get_director_plan()
                 if director_plan_backup:
                     print(f"  📋 Backed up {len(director_plan_backup)} scenes from director_plan")
+                else:
+                    print(f"  ⚠️ director_plan is empty!")
             except Exception as e:
                 print(f"  ⚠️ Could not backup director_plan: {e}")
 
@@ -205,12 +215,14 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
 
         if deepseek_key:
             cfg['deepseek_api_keys'] = [deepseek_key]
+
+        # === KIỂM TRA: Nếu không có API keys → dùng fallback ngay ===
         if not groq_keys and not gemini_keys and not deepseek_key:
-            print(f"  ⚠️ No API keys configured, using fallback prompts from director_plan")
-            # Restore scenes from director_plan backup
-            if director_plan_backup:
-                _restore_scenes_from_director_plan(excel_path, director_plan_backup)
-            return True  # Continue with fallback
+            print(f"  ⚠️ No API keys configured, using existing fallback prompts")
+            # KHÔNG xóa Excel, giữ nguyên fallback prompts
+            if original_excel_backup and original_excel_backup.exists():
+                original_excel_backup.unlink()  # Xóa backup vì không cần
+            return True  # Continue with existing fallback
 
         # Prefer DeepSeek for prompts
         cfg['preferred_provider'] = 'deepseek' if deepseek_key else ('groq' if groq_keys else 'gemini')
@@ -218,7 +230,8 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
         # Force V2 flow
         cfg['use_v2_flow'] = True
 
-        # Delete existing Excel to regenerate
+        # === THẬN TRỌNG: Xóa Excel để regenerate ===
+        # Chỉ xóa sau khi đã backup
         if excel_path.exists():
             excel_path.unlink()
             print(f"  🗑️ Deleted fallback Excel, regenerating with API...")
@@ -227,34 +240,61 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
         from modules.prompts_generator import PromptGenerator
         gen = PromptGenerator(cfg)
 
-        if gen.generate_for_project(project_dir, name, overwrite=True):
+        api_success = False
+        try:
+            api_success = gen.generate_for_project(project_dir, name, overwrite=True)
+        except Exception as api_err:
+            print(f"  ❌ API error: {api_err}")
+            api_success = False
+
+        if api_success:
             print(f"  ✅ Excel completed with API prompts")
+            # Xóa backup vì không cần nữa
+            if original_excel_backup and original_excel_backup.exists():
+                original_excel_backup.unlink()
             return True
         else:
-            print(f"  ❌ Failed to generate API prompts, restoring from director_plan backup...")
-            # === API FAILED: Restore scenes from backup ===
-            if director_plan_backup:
-                _restore_scenes_from_director_plan(excel_path, director_plan_backup)
-                print(f"  ✅ Restored {len(director_plan_backup)} scenes from backup")
-                return True
-            else:
-                print(f"  ❌ No backup available!")
-                return False
+            print(f"  ❌ API failed (có thể hết tiền), restoring backup...")
+            # === API FAILED: Khôi phục từ backup ===
+            return _restore_from_backup(excel_path, original_excel_backup, director_plan_backup)
 
     except Exception as e:
         print(f"  ❌ API completion error: {e}")
         import traceback
         traceback.print_exc()
-        # === ERROR: Try to restore from backup ===
-        if director_plan_backup:
-            print(f"  🔄 Restoring from director_plan backup...")
-            try:
-                _restore_scenes_from_director_plan(excel_path, director_plan_backup)
-                print(f"  ✅ Restored {len(director_plan_backup)} scenes from backup")
-                return True
-            except Exception as restore_err:
-                print(f"  ❌ Failed to restore: {restore_err}")
-        return False
+        # === ERROR: Khôi phục từ backup ===
+        return _restore_from_backup(excel_path, original_excel_backup, director_plan_backup)
+
+
+def _restore_from_backup(excel_path: Path, original_excel_backup: Path, director_plan_backup: list) -> bool:
+    """
+    Khôi phục Excel từ backup khi API fail.
+    Ưu tiên: 1. Original Excel backup → 2. director_plan backup → 3. Fail
+    """
+    import shutil
+
+    # Ưu tiên 1: Khôi phục từ file backup gốc
+    if original_excel_backup and original_excel_backup.exists():
+        try:
+            shutil.copy2(original_excel_backup, excel_path)
+            original_excel_backup.unlink()  # Xóa backup
+            print(f"  ✅ Restored original Excel with fallback prompts")
+            return True
+        except Exception as e:
+            print(f"  ⚠️ Could not restore from file backup: {e}")
+
+    # Ưu tiên 2: Rebuild từ director_plan
+    if director_plan_backup:
+        print(f"  🔄 Rebuilding from director_plan backup ({len(director_plan_backup)} scenes)...")
+        try:
+            _restore_scenes_from_director_plan(excel_path, director_plan_backup)
+            print(f"  ✅ Restored {len(director_plan_backup)} scenes from director_plan")
+            return True
+        except Exception as restore_err:
+            print(f"  ❌ Failed to restore from director_plan: {restore_err}")
+
+    print(f"  ❌ No backup available!")
+    return False
 
 
 def _restore_scenes_from_director_plan(excel_path: Path, director_plan: list) -> bool:
