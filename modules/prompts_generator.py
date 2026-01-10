@@ -5568,9 +5568,42 @@ OUTPUT FORMAT (JSON only):
             )
             workbook.add_scene(scene_obj)
 
+        # === BƯỚC 4: Lưu BACKUP vào director_plan sheet ===
+        # QUAN TRỌNG: Worker VMs sẽ clear scenes sheet khi gọi API
+        # Backup prompts ở director_plan giúp recover nếu API fails
+        director_plan_data = []
+        for idx, scene in enumerate(scenes_data):
+            scene_id = idx + 1
+            srt_text = scene.get("text", "")[:300]
+            srt_start = scene.get("srt_start", "00:00:00,000")
+            srt_end = scene.get("srt_end", "00:00:05,000")
+            duration = scene.get("duration_seconds", 5)
+
+            # Tạo fallback prompt giống như ở scenes
+            shot_type = shot_types[scene_id % len(shot_types)]
+            fallback_prompt = f"[FALLBACK] {shot_type}. Narrator (nvc.png). Illustrating: {srt_text[:150]}. Cinematic lighting, 4K photorealistic"
+
+            director_plan_data.append({
+                "scene_id": scene_id,
+                "srt_start": srt_start,
+                "srt_end": srt_end,
+                "duration": duration,
+                "text": srt_text,
+                "characters_used": '["nvc"]',
+                "location_used": "",
+                "reference_files": '["nvc.png"]',
+                "img_prompt": fallback_prompt,
+                "status": "backup"
+            })
+
+        # Lưu vào director_plan sheet
+        workbook.save_director_plan(director_plan_data)
+        self.logger.info(f"[FALLBACK-ONLY] ✓ Đã lưu backup vào director_plan sheet")
+
         # Lưu Excel
         workbook.save()
         self.logger.info(f"[FALLBACK-ONLY] ✓ Đã lưu {len(scenes_data)} scenes vào Excel")
         self.logger.info("[FALLBACK-ONLY] ✓ Excel cơ bản hoàn thành - Workers sẽ gọi API hoàn thiện")
+        self.logger.info("[FALLBACK-ONLY] ✓ Backup prompts saved to director_plan (sẽ dùng nếu API fail)")
 
         return True

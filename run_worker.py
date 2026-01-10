@@ -168,12 +168,29 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
     """
     Complete Excel prompts using API (V2 flow).
     Called when Excel has [FALLBACK] prompts from run_srt.py.
+
+    QUAN TRỌNG: Nếu API fails, sẽ dùng backup prompts từ director_plan sheet.
     """
     import yaml
 
     print(f"  🤖 Completing Excel with API (V2 flow)...")
 
+    excel_path = project_dir / f"{name}_prompts.xlsx"
+    director_plan_backup = []
+
     try:
+        # === BƯỚC 1: Backup director_plan trước khi làm gì ===
+        if excel_path.exists():
+            from modules.excel_manager import PromptWorkbook
+            try:
+                wb = PromptWorkbook(str(excel_path))
+                wb.load_or_create()
+                director_plan_backup = wb.get_director_plan()
+                if director_plan_backup:
+                    print(f"  📋 Backed up {len(director_plan_backup)} scenes from director_plan")
+            except Exception as e:
+                print(f"  ⚠️ Could not backup director_plan: {e}")
+
         # Load config
         cfg = {}
         cfg_file = TOOL_DIR / "config" / "settings.yaml"
@@ -189,7 +206,10 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
         if deepseek_key:
             cfg['deepseek_api_keys'] = [deepseek_key]
         if not groq_keys and not gemini_keys and not deepseek_key:
-            print(f"  ⚠️ No API keys configured, using fallback prompts")
+            print(f"  ⚠️ No API keys configured, using fallback prompts from director_plan")
+            # Restore scenes from director_plan backup
+            if director_plan_backup:
+                _restore_scenes_from_director_plan(excel_path, director_plan_backup)
             return True  # Continue with fallback
 
         # Prefer DeepSeek for prompts
@@ -199,7 +219,6 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
         cfg['use_v2_flow'] = True
 
         # Delete existing Excel to regenerate
-        excel_path = project_dir / f"{name}_prompts.xlsx"
         if excel_path.exists():
             excel_path.unlink()
             print(f"  🗑️ Deleted fallback Excel, regenerating with API...")
@@ -212,14 +231,90 @@ def complete_excel_with_api(project_dir: Path, name: str) -> bool:
             print(f"  ✅ Excel completed with API prompts")
             return True
         else:
-            print(f"  ❌ Failed to generate API prompts")
-            return False
+            print(f"  ❌ Failed to generate API prompts, restoring from director_plan backup...")
+            # === API FAILED: Restore scenes from backup ===
+            if director_plan_backup:
+                _restore_scenes_from_director_plan(excel_path, director_plan_backup)
+                print(f"  ✅ Restored {len(director_plan_backup)} scenes from backup")
+                return True
+            else:
+                print(f"  ❌ No backup available!")
+                return False
 
     except Exception as e:
         print(f"  ❌ API completion error: {e}")
         import traceback
         traceback.print_exc()
+        # === ERROR: Try to restore from backup ===
+        if director_plan_backup:
+            print(f"  🔄 Restoring from director_plan backup...")
+            try:
+                _restore_scenes_from_director_plan(excel_path, director_plan_backup)
+                print(f"  ✅ Restored {len(director_plan_backup)} scenes from backup")
+                return True
+            except Exception as restore_err:
+                print(f"  ❌ Failed to restore: {restore_err}")
         return False
+
+
+def _restore_scenes_from_director_plan(excel_path: Path, director_plan: list) -> bool:
+    """
+    Khôi phục scenes từ director_plan backup.
+    Tạo lại Excel với scenes từ backup prompts.
+    """
+    from modules.excel_manager import PromptWorkbook, Scene, Character
+
+    print(f"  🔄 Restoring {len(director_plan)} scenes from director_plan backup...")
+
+    # Create new workbook
+    wb = PromptWorkbook(str(excel_path))
+    wb.load_or_create()
+
+    # Clear existing scenes if any
+    try:
+        wb.clear_scenes()
+    except:
+        pass
+
+    # Add default character if not exists
+    chars = wb.get_characters()
+    if not chars:
+        default_char = Character(
+            id="nvc",
+            name="Narrator",
+            role="narrator",
+            vietnamese_prompt="Người kể chuyện",
+            english_prompt="A storyteller narrating the video",
+            image_file="nvc.png",
+            status="pending"
+        )
+        wb.add_character(default_char)
+
+    # Restore scenes from backup
+    for plan in director_plan:
+        scene = Scene(
+            scene_id=plan.get("plan_id", 0),
+            srt_start=plan.get("srt_start", ""),
+            srt_end=plan.get("srt_end", ""),
+            duration=plan.get("duration", 0),
+            planned_duration=plan.get("duration", 0),
+            srt_text=plan.get("srt_text", ""),
+            img_prompt=plan.get("img_prompt", ""),
+            video_prompt=plan.get("img_prompt", ""),  # Use same for video
+            status_img="pending",
+            status_vid="pending",
+            characters_used=plan.get("characters_used", ""),
+            location_used=plan.get("location_used", ""),
+            reference_files=plan.get("reference_files", "")
+        )
+        wb.add_scene(scene)
+
+    # Restore director_plan data
+    wb.save_director_plan(director_plan)
+
+    wb.save()
+    print(f"  ✅ Restored Excel with {len(director_plan)} backup scenes")
+    return True
 
 
 def delete_master_source(code: str):
