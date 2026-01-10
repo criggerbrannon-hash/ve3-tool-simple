@@ -5231,58 +5231,93 @@ OUTPUT FORMAT (JSON only, không markdown):
         num_shots = max(1, int(duration / max_shot_duration) + (1 if duration % max_shot_duration > 2 else 0))
         shot_duration = duration / num_shots if num_shots > 0 else duration
 
-        # Tạo prompt cho API
-        char_info = ""
+        # Build character description chi tiết
+        char_desc = ""
+        char_lock = ""
         for c in characters:
             if c.id == main_char:
-                char_info = f"{c.id}: {c.character_lock or c.name}"
+                char_lock = c.character_lock or ""
+                char_desc = f"{c.name}: {char_lock}" if char_lock else f"{c.name}"
                 break
-        if not char_info:
-            char_info = f"{main_char}: main character"
+        if not char_desc:
+            char_desc = f"main character ({main_char})"
 
-        loc_info = ""
+        # Build location description chi tiết
+        loc_desc = ""
+        loc_lock = ""
         for l in locations:
             if l.id == location:
-                loc_info = f"{l.id}: {l.location_lock or l.name}"
+                loc_lock = l.location_lock or ""
+                loc_desc = f"{l.name}: {loc_lock}" if loc_lock else f"{l.name}"
                 break
 
-        prompt = f"""Tạo {num_shots} shot(s) cho scene sau:
+        # Emotion to cinematic lighting/mood
+        emotion_cinematics = {
+            "sad": "soft diffused lighting, muted colors, melancholic atmosphere, shallow depth of field",
+            "happy": "warm golden hour lighting, vibrant colors, uplifting atmosphere",
+            "angry": "harsh dramatic lighting, high contrast, intense shadows, red undertones",
+            "fear": "low-key lighting, deep shadows, cold blue tones, unsettling atmosphere",
+            "love": "soft romantic lighting, warm tones, bokeh background, intimate framing",
+            "neutral": "natural balanced lighting, cinematic color grading"
+        }
+        cinematic_mood = emotion_cinematics.get(emotion, emotion_cinematics["neutral"])
 
-SCENE INFO:
-- Nội dung: "{srt_text[:200]}"
-- Scene type: {scene_type}
-- Emotion: {emotion}
-- Duration: {duration:.1f}s → {num_shots} shots, mỗi shot ~{shot_duration:.1f}s
-- Character: {char_info}
-- Location: {loc_info}
-- Style: {global_style}
+        prompt = f"""You are a professional cinematographer creating shot descriptions for a high-quality video.
 
-QUY TẮC:
-- KHÔNG đưa text/dialogue vào prompt (tránh AI vẽ chữ)
-- Mỗi shot có shot_type khác nhau (WIDE, CLOSE-UP, MEDIUM, EXTREME CLOSE-UP)
-- Emotion phải match với nội dung
-- Thêm "Illustrating: [nội dung]" ở cuối mỗi prompt
+SCENE CONTEXT:
+- Narration/Content: "{srt_text[:300]}"
+- Duration: {duration:.1f}s → Create {num_shots} shot(s), each ~{shot_duration:.1f}s
+- Emotion/Mood: {emotion}
+- Scene Type: {scene_type}
 
-OUTPUT FORMAT (JSON only):
+CHARACTER (MUST use exactly as described):
+- ID: {main_char}
+- Description: {char_desc}
+- Reference file: {main_char}.png
+
+LOCATION:
+- ID: {location if location else "unspecified"}
+- Description: {loc_desc if loc_desc else "contextual setting based on narration"}
+{f"- Reference file: {location}.png" if location else ""}
+
+VISUAL STYLE: {global_style}
+CINEMATIC MOOD: {cinematic_mood}
+
+REQUIREMENTS:
+1. Each shot MUST be a detailed, professional cinematography description
+2. Include: camera angle, lens (mm), lighting, composition, character action/expression
+3. DO NOT include any text, dialogue, or words in the visual description
+4. Character MUST match the description exactly (age, appearance, clothing)
+5. Each shot should have a DIFFERENT camera angle/shot type for visual variety
+6. Add emotional depth through facial expressions, body language, and atmosphere
+7. End each prompt with the character reference: ({main_char}.png)
+
+SHOT TYPES to use:
+- WIDE SHOT (24mm): Establish location, show full body, environment context
+- MEDIUM SHOT (50mm): Waist-up, conversational, show gestures
+- CLOSE-UP (85mm): Face/emotion focus, intimate, detailed expressions
+- EXTREME CLOSE-UP (100mm macro): Eyes, hands, specific details
+- OVER-THE-SHOULDER: Perspective shot, connection between elements
+- LOW ANGLE: Power, dominance, dramatic effect
+- HIGH ANGLE: Vulnerability, overview, diminishing effect
+
+OUTPUT FORMAT (JSON only, no markdown):
 {{
   "shots": [
     {{
-      "shot_type": "WIDE",
-      "img_prompt": "Wide shot, 24mm lens, [visual description], {global_style}. Illustrating: [tóm tắt nội dung]",
-      "reference_files": ["{main_char}.png"]
-    }},
-    {{
       "shot_type": "CLOSE-UP",
-      "img_prompt": "Close-up, 85mm lens, [visual description], {global_style}. Illustrating: [tóm tắt nội dung]",
-      "reference_files": ["{main_char}.png"]
+      "img_prompt": "Close-up shot, 85mm portrait lens, [DETAILED character description with exact appearance], [specific facial expression matching emotion], [lighting description], [background blur/bokeh], {global_style}. Character reference: ({main_char}.png)"
     }}
   ]
-}}"""
+}}
+
+Create {num_shots} unique, high-quality cinematic shots that visually tell the story of: "{srt_text[:150]}"
+"""
 
         shots = []
 
         try:
-            response = self._generate_content(prompt, temperature=0.5, max_tokens=2000)
+            response = self._generate_content(prompt, temperature=0.7, max_tokens=3000)
             json_data = self._extract_json(response)
 
             if json_data and "shots" in json_data:
@@ -5346,38 +5381,56 @@ OUTPUT FORMAT (JSON only):
         start_seconds: float,
         global_style: str
     ) -> list:
-        """Tạo shots fallback không cần API."""
+        """Tạo shots fallback không cần API - chất lượng cao."""
         shots = []
         main_char = scene.get("main_character", "nvc")
         location = scene.get("location", "")
         srt_text = scene.get("srt_text", "")
         emotion = scene.get("emotion", "neutral")
 
-        # Shot types để rotate
-        shot_types = ["WIDE", "CLOSE-UP", "MEDIUM", "EXTREME CLOSE-UP"]
+        # Shot types với lens info
+        shot_configs = [
+            ("WIDE SHOT", "24mm wide-angle lens", "full body in environment, establishing shot"),
+            ("MEDIUM SHOT", "50mm standard lens", "waist-up framing, conversational distance"),
+            ("CLOSE-UP", "85mm portrait lens", "face and shoulders, emotional focus, shallow depth of field"),
+            ("EXTREME CLOSE-UP", "100mm macro lens", "detailed facial features, eyes reflecting emotion"),
+            ("LOW ANGLE", "35mm lens from below", "empowering perspective, dramatic presence"),
+            ("OVER-THE-SHOULDER", "50mm lens", "intimate perspective, connection to scene")
+        ]
 
-        # Emotion → visual cue
-        emotion_map = {
-            "sad": "melancholic expression, tears, emotional",
-            "happy": "warm smile, joyful atmosphere",
-            "angry": "intense expression, dramatic lighting",
-            "neutral": "natural expression, contemplative"
+        # Emotion → cinematic description
+        emotion_cinematics = {
+            "sad": ("soft diffused lighting, muted blue-grey tones", "melancholic expression, downcast eyes, subtle tears"),
+            "happy": ("warm golden hour lighting, vibrant colors", "genuine warm smile, bright eyes, relaxed posture"),
+            "angry": ("harsh dramatic side-lighting, high contrast shadows", "intense furrowed brow, clenched jaw, fierce gaze"),
+            "fear": ("low-key lighting, cold blue undertones, deep shadows", "wide anxious eyes, tense shoulders, worried expression"),
+            "love": ("soft romantic backlighting, warm pink tones, lens flare", "tender loving gaze, soft smile, gentle expression"),
+            "neutral": ("natural balanced lighting, cinematic color grading", "contemplative expression, thoughtful gaze")
         }
-        visual_cue = emotion_map.get(emotion, emotion_map["neutral"])
+        lighting, expression = emotion_cinematics.get(emotion, emotion_cinematics["neutral"])
 
-        # Build reference_files với cả character và location
+        # Build reference_files
         ref_files = [f"{main_char}.png"]
         if location:
             ref_files.append(f"{location}.png")
 
+        # Location annotation
+        loc_part = f", set in {location} ({location}.png)" if location else ""
+
         current_time = start_seconds
         for i in range(num_shots):
-            shot_type = shot_types[i % len(shot_types)]
+            config = shot_configs[i % len(shot_configs)]
+            shot_type, lens_desc, framing = config
             shot_end = current_time + shot_duration
 
-            # Tạo prompt với annotation cho cả character và location
-            loc_annotation = f" ({location}.png)" if location else ""
-            img_prompt = f"{global_style}, {shot_type.lower()}, {visual_cue}, cinematic lighting. Character ({main_char}.png){loc_annotation}. Illustrating: {srt_text[:100]}"
+            # Tạo prompt chất lượng cao
+            img_prompt = (
+                f"{shot_type}, {lens_desc}, {framing}. "
+                f"Character ({main_char}.png) with {expression}. "
+                f"{lighting}{loc_part}. "
+                f"{global_style}, 4K photorealistic, cinematic composition. "
+                f"Illustrating: {srt_text[:80]}"
+            )
 
             shot = {
                 "scene_id": scene["scene_id"],
@@ -5389,7 +5442,6 @@ OUTPUT FORMAT (JSON only):
                 "img_prompt": img_prompt,
                 "reference_files": ref_files,
                 "srt_text": srt_text[:200],
-                # QUAN TRỌNG: Thêm main_character và location để lưu vào Excel
                 "main_character": main_char,
                 "location": location
             }
