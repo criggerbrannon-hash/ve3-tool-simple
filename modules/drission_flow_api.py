@@ -1259,7 +1259,7 @@ class DrissionFlowAPI:
                 if rotator and rotator.enabled:
                     # Tìm IPv6 hoạt động (test connectivity trước khi dùng)
                     self.log(f"🌐 IPv6 MODE: Finding working IPv6...")
-                    working_ipv6 = rotator.init_with_working_ipv6(max_tries=10)
+                    working_ipv6 = rotator.init_with_working_ipv6()  # Thử hết danh sách
 
                     if working_ipv6:
                         # Start local proxy (CHỈ kết nối IPv6, không fallback)
