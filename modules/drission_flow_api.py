@@ -1578,22 +1578,35 @@ class DrissionFlowAPI:
                         self.log(f"  → New project URL saved")
             else:
                 self.log("✓ Đã ở trong project!")
-                # Chọn "Tạo hình ảnh" từ dropdown
-                time.sleep(1)
+                # Đợi page ổn định trước khi chạy JS (tránh ContextLostError)
+                time.sleep(2)
+
+                # Chọn "Tạo hình ảnh" từ dropdown - với retry khi page refresh
                 for j in range(10):
-                    result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
-                    if result == 'CLICKED':
-                        self.log("✓ Chọn 'Tạo hình ảnh'")
-                        time.sleep(1)
-                        break
+                    try:
+                        result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+                        if result == 'CLICKED':
+                            self.log("✓ Chọn 'Tạo hình ảnh'")
+                            time.sleep(1)
+                            break
+                    except Exception as e:
+                        if 'refresh' in str(e).lower() or 'context' in str(e).lower():
+                            self.log(f"⚠️ Page refreshed, đợi lại... ({j+1}/10)")
+                            time.sleep(2)
+                            continue
+                        raise
                     time.sleep(0.5)
 
-        # 5. Đợi textarea sẵn sàng
+        # 5. Đợi textarea sẵn sàng - với retry khi page refresh
         self.log("Đợi project load...")
         for i in range(30):
-            if self._find_textarea():
-                self.log("✓ Project đã sẵn sàng!")
-                break
+            try:
+                if self._find_textarea():
+                    self.log("✓ Project đã sẵn sàng!")
+                    break
+            except Exception as e:
+                if 'refresh' in str(e).lower() or 'context' in str(e).lower():
+                    self.log(f"⚠️ Page đang refresh... ({i+1}/30)")
             time.sleep(1)
         else:
             self.log("✗ Timeout - không tìm thấy textarea", "ERROR")
