@@ -261,9 +261,14 @@ ipv6_rotation:
   # Số lần 403 liên tiếp trước khi đổi IPv6
   max_403_before_rotate: 3
 
-  # Tắt IPv4 để ép Chrome dùng IPv6 (QUAN TRỌNG!)
-  # Nếu không tắt, Windows sẽ ưu tiên IPv4 và Chrome không dùng IPv6
-  disable_ipv4: true          # true = tắt IPv4 khi đổi IPv6
+  # Tắt IPv4 để ép Chrome dùng IPv6
+  # CẢNH BÁO: Nếu dùng Remote Desktop qua IPv4, để FALSE!
+  disable_ipv4: false         # false = giữ IPv4 cho RDP
+
+  # Local SOCKS5 Proxy - Ép Chrome dùng IPv6 mà không tắt IPv4
+  # Tool sẽ tạo proxy tại localhost:1088 bind đến IPv6
+  use_local_proxy: true       # true = dùng local proxy cho Chrome
+  local_proxy_port: 1088      # Port cho local SOCKS5 proxy
 
   # Gateway IPv6 (nếu cần)
   gateway: ""                 # Để trống nếu không cần

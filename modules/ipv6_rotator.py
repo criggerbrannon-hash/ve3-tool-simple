@@ -102,7 +102,9 @@ class IPv6Rotator:
         self.interface_name = ipv6_cfg.get('interface_name', 'Ethernet')
         self.max_403 = ipv6_cfg.get('max_403_before_rotate', 3)
         self.gateway = ipv6_cfg.get('gateway', '')
-        self.disable_ipv4 = ipv6_cfg.get('disable_ipv4', True)  # Tắt IPv4 để ép dùng IPv6
+        self.disable_ipv4 = ipv6_cfg.get('disable_ipv4', False)  # False = giữ IPv4 cho RDP
+        self.use_local_proxy = ipv6_cfg.get('use_local_proxy', True)  # Dùng local proxy thay vì tắt IPv4
+        self.local_proxy_port = ipv6_cfg.get('local_proxy_port', 1088)
 
         # Load IPv6 list from file
         self.ipv6_list: List[str] = []
@@ -114,6 +116,7 @@ class IPv6Rotator:
         self.current_ipv6 = None
         self.last_rotated = None
         self._ipv4_disabled = False  # Track trạng thái IPv4
+        self._local_proxy = None  # Local SOCKS5 proxy
 
         # Log function (có thể override)
         self.log = print
@@ -329,7 +332,8 @@ class IPv6Rotator:
 
         1. Lấy IPv6 tiếp theo từ danh sách
         2. Set IPv6 mới
-        3. Reset 403 counter
+        3. Start/update local proxy (nếu bật)
+        4. Reset 403 counter
 
         Returns:
             IPv6 mới nếu thành công, None nếu thất bại
@@ -353,6 +357,10 @@ class IPv6Rotator:
             self.log(f"[IPv6] Rotating: {current} → {new_ipv6}")
 
             if self.set_ipv6(new_ipv6):
+                # Start/update local proxy nếu bật
+                if self.use_local_proxy:
+                    self._start_local_proxy(new_ipv6)
+
                 self.reset_403()
                 self.last_rotated = time.time()
                 return new_ipv6
@@ -362,6 +370,31 @@ class IPv6Rotator:
         except Exception as e:
             self.log(f"[IPv6] Rotation error: {e}")
             return None
+
+    def _start_local_proxy(self, ipv6_address: str):
+        """Start or update local SOCKS5 proxy với IPv6 mới."""
+        try:
+            from modules.ipv6_proxy import start_ipv6_proxy, get_ipv6_proxy
+
+            if self._local_proxy is None:
+                # Start proxy lần đầu
+                self._local_proxy = start_ipv6_proxy(
+                    ipv6_address=ipv6_address,
+                    port=self.local_proxy_port,
+                    log_func=self.log
+                )
+            else:
+                # Update IPv6 cho proxy đang chạy
+                self._local_proxy.set_ipv6(ipv6_address)
+
+        except Exception as e:
+            self.log(f"[IPv6] Local proxy error: {e}")
+
+    def get_proxy_url(self) -> Optional[str]:
+        """Get proxy URL cho Chrome (socks5://localhost:port)."""
+        if self.use_local_proxy and self._local_proxy and self._local_proxy._running:
+            return f"socks5://127.0.0.1:{self.local_proxy_port}"
+        return None
 
     def should_rotate(self) -> bool:
         """

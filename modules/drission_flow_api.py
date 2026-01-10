@@ -1350,7 +1350,21 @@ class DrissionFlowAPI:
                         self.log(f"  Mode: IP Authorization")
             else:
                 self._is_rotating_mode = False
-                self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
+                # Check for IPv6 local proxy
+                try:
+                    from modules.ipv6_rotator import get_ipv6_rotator
+                    rotator = get_ipv6_rotator()
+                    if rotator and rotator.enabled and rotator.use_local_proxy:
+                        proxy_url = rotator.get_proxy_url()
+                        if proxy_url:
+                            options.set_argument(f'--proxy-server={proxy_url}')
+                            self.log(f"🌐 IPv6 Proxy: {proxy_url}")
+                        else:
+                            self.log("⚠️ IPv6 proxy chưa sẵn sàng - chạy không có proxy", "WARN")
+                    else:
+                        self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
+                except:
+                    self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
 
             # Tắt Chrome đang dùng profile này trước (tránh conflict)
             self._kill_chrome_using_profile()
