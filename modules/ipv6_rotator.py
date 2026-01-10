@@ -106,6 +106,9 @@ def _get_gateway_for_ipv6(ipv6_address: str) -> str:
 class IPv6Rotator:
     """Quản lý việc đổi IPv6 khi bị block."""
 
+    # Block time for 403 errors (2 hours)
+    BLOCK_DURATION = 2 * 60 * 60  # seconds
+
     def __init__(self, settings: Dict[str, Any] = None):
         """
         Khởi tạo IPv6 Rotator.
@@ -136,6 +139,11 @@ class IPv6Rotator:
         self._ipv4_disabled = False  # Track trạng thái IPv4
         self._local_proxy = None  # Local SOCKS5 proxy
 
+        # Dead & Blocked IPs
+        self.dead_ips: set = set()  # IP không có connectivity (xóa vĩnh viễn)
+        self.blocked_ips: Dict[str, float] = {}  # IP bị 403: {ip: timestamp}
+        self._load_dead_ips()
+
         # Log function (có thể override)
         self.log = print
 
@@ -157,7 +165,9 @@ class IPv6Rotator:
 
                 if self.ipv6_list:
                     self.enabled = True  # Auto-enable nếu có danh sách
-                    print(f"[IPv6] Loaded {len(self.ipv6_list)} IPv6 addresses from {ipv6_file.name}")
+                    # Random shuffle để không dùng cùng IP mỗi lần
+                    random.shuffle(self.ipv6_list)
+                    print(f"[IPv6] Loaded {len(self.ipv6_list)} IPv6 addresses (shuffled)")
                 else:
                     print(f"[IPv6] No IPv6 addresses in {ipv6_file.name}")
             else:
@@ -165,6 +175,72 @@ class IPv6Rotator:
 
         except Exception as e:
             print(f"[IPv6] Error loading IPv6 list: {e}")
+
+    def _load_dead_ips(self):
+        """Load danh sách IP die từ file."""
+        try:
+            base_dir = Path(__file__).parent.parent
+            dead_file = base_dir / "config" / "ipv6_dead.txt"
+
+            if dead_file.exists():
+                with open(dead_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        ip = line.strip()
+                        if ip and not ip.startswith('#'):
+                            self.dead_ips.add(ip.lower())
+
+                if self.dead_ips:
+                    print(f"[IPv6] Loaded {len(self.dead_ips)} dead IPs to skip")
+        except Exception as e:
+            print(f"[IPv6] Error loading dead IPs: {e}")
+
+    def _save_dead_ip(self, ipv6: str):
+        """Lưu IP die vào file."""
+        try:
+            base_dir = Path(__file__).parent.parent
+            dead_file = base_dir / "config" / "ipv6_dead.txt"
+
+            with open(dead_file, 'a', encoding='utf-8') as f:
+                f.write(f"{ipv6}\n")
+
+            self.dead_ips.add(ipv6.lower())
+            self.log(f"[IPv6] Marked as DEAD: {ipv6}")
+        except Exception as e:
+            self.log(f"[IPv6] Error saving dead IP: {e}")
+
+    def mark_ip_dead(self, ipv6: str):
+        """Đánh dấu IP là die (không có connectivity)."""
+        self._save_dead_ip(ipv6)
+        # Xóa khỏi danh sách
+        self.ipv6_list = [ip for ip in self.ipv6_list if ip.lower() != ipv6.lower()]
+
+    def mark_ip_blocked(self, ipv6: str):
+        """Đánh dấu IP bị block 403 (block 2 tiếng)."""
+        self.blocked_ips[ipv6.lower()] = time.time()
+        self.log(f"[IPv6] Blocked for 2 hours: {ipv6}")
+
+    def is_ip_available(self, ipv6: str) -> bool:
+        """Kiểm tra IP có sẵn sàng dùng không."""
+        ip_lower = ipv6.lower()
+
+        # Check dead
+        if ip_lower in self.dead_ips:
+            return False
+
+        # Check blocked (2 hour timeout)
+        if ip_lower in self.blocked_ips:
+            blocked_time = self.blocked_ips[ip_lower]
+            if time.time() - blocked_time < self.BLOCK_DURATION:
+                return False
+            else:
+                # Hết thời gian block
+                del self.blocked_ips[ip_lower]
+
+        return True
+
+    def get_available_ips(self) -> List[str]:
+        """Lấy danh sách IP còn dùng được."""
+        return [ip for ip in self.ipv6_list if self.is_ip_available(ip)]
 
     def set_logger(self, log_func):
         """Set custom log function."""
@@ -194,28 +270,38 @@ class IPv6Rotator:
         """
         Khởi tạo với một IPv6 hoạt động.
         Thử TẤT CẢ IP trong danh sách cho đến khi tìm được IP có connectivity.
+        - Skip IP đã chết hoặc đang bị block
+        - Đánh dấu IP die vào file để lần sau không dùng lại
 
         Returns:
             IPv6 hoạt động hoặc None
         """
-        if not self.ipv6_list:
-            self.log("[IPv6] No IPv6 list!")
+        available_ips = self.get_available_ips()
+
+        if not available_ips:
+            self.log("[IPv6] No available IPv6 IPs!")
             return None
 
-        total = len(self.ipv6_list)
-        self.log(f"[IPv6] Finding working IPv6 (total: {total} IPs)...")
+        total = len(available_ips)
+        skipped = len(self.ipv6_list) - total
+        if skipped > 0:
+            self.log(f"[IPv6] Skipping {skipped} dead/blocked IPs")
 
-        for i, ipv6 in enumerate(self.ipv6_list):
+        self.log(f"[IPv6] Finding working IPv6 (available: {total} IPs)...")
+
+        for i, ipv6 in enumerate(available_ips):
             self.log(f"[IPv6] Trying {i+1}/{total}: {ipv6}")
 
             if self.set_ipv6(ipv6):
                 # Test connectivity
                 if self.test_ipv6_connectivity():
                     self.log(f"[IPv6] ✓ Found working IP: {ipv6}")
-                    self.current_index = i
+                    self.current_ipv6 = ipv6
                     return ipv6
                 else:
-                    self.log(f"[IPv6] ✗ No connectivity: {ipv6}")
+                    # Đánh dấu IP die và xóa khỏi danh sách
+                    self.log(f"[IPv6] ✗ No connectivity: {ipv6} → marking as DEAD")
+                    self.mark_ip_dead(ipv6)
             else:
                 self.log(f"[IPv6] ✗ Failed to set: {ipv6}")
 
@@ -411,18 +497,15 @@ class IPv6Rotator:
             self.log(f"[IPv6] Error enabling IPv4: {e}")
             return False
 
-    def rotate(self, max_retries: int = 5) -> Optional[str]:
+    def rotate(self) -> Optional[str]:
         """
-        Thực hiện rotate IPv6.
+        Thực hiện rotate IPv6 (do bị 403).
 
-        1. Lấy IPv6 tiếp theo từ danh sách
-        2. Set IPv6 mới
-        3. Test connectivity - nếu fail thì thử IP tiếp theo
-        4. Start/update local proxy (nếu bật)
+        1. Block IP hiện tại 2 tiếng
+        2. Lấy IP available tiếp theo
+        3. Set IPv6 mới + test connectivity
+        4. Nếu fail connectivity → đánh dấu dead, thử tiếp
         5. Reset 403 counter
-
-        Args:
-            max_retries: Số lần thử tối đa nếu IP không hoạt động
 
         Returns:
             IPv6 mới nếu thành công, None nếu thất bại
@@ -431,43 +514,40 @@ class IPv6Rotator:
             self.log("[IPv6] Rotation is disabled")
             return None
 
-        if not self.ipv6_list:
-            self.log("[IPv6] No IPv6 list available!")
+        # Block IP hiện tại 2 tiếng (vì đang rotate do 403)
+        if self.current_ipv6:
+            self.mark_ip_blocked(self.current_ipv6)
+
+        # Lấy danh sách IP available (không dead, không blocked)
+        available_ips = self.get_available_ips()
+
+        if not available_ips:
+            self.log("[IPv6] No available IPv6 IPs left!")
             return None
 
-        tried_ips = set()
-        current = self.get_current_ipv6()
+        total = len(available_ips)
+        self.log(f"[IPv6] Rotating... ({total} IPs available)")
 
-        for attempt in range(max_retries):
-            try:
-                new_ipv6 = self.get_next_ipv6()
+        for i, new_ipv6 in enumerate(available_ips):
+            self.log(f"[IPv6] Trying {i+1}/{total}: {new_ipv6}")
 
-                if not new_ipv6 or new_ipv6 in tried_ips:
-                    self.log("[IPv6] No more untried IPs available")
-                    break
+            if self.set_ipv6(new_ipv6):
+                # Test connectivity
+                if self.test_ipv6_connectivity():
+                    self.log(f"[IPv6] ✓ Connectivity OK: {new_ipv6}")
 
-                tried_ips.add(new_ipv6)
-                self.log(f"[IPv6] Rotating: {current} → {new_ipv6} (attempt {attempt + 1}/{max_retries})")
+                    # Start/update local proxy nếu bật
+                    if self.use_local_proxy:
+                        self._start_local_proxy(new_ipv6)
 
-                if self.set_ipv6(new_ipv6):
-                    # Test connectivity
-                    if self.test_ipv6_connectivity():
-                        self.log(f"[IPv6] ✓ Connectivity OK: {new_ipv6}")
-
-                        # Start/update local proxy nếu bật
-                        if self.use_local_proxy:
-                            self._start_local_proxy(new_ipv6)
-
-                        self.reset_403()
-                        self.last_rotated = time.time()
-                        return new_ipv6
-                    else:
-                        self.log(f"[IPv6] ✗ No connectivity, trying next IP...")
-                        continue
-
-            except Exception as e:
-                self.log(f"[IPv6] Rotation error: {e}")
-                continue
+                    self.current_ipv6 = new_ipv6
+                    self.reset_403()
+                    self.last_rotated = time.time()
+                    return new_ipv6
+                else:
+                    # Đánh dấu IP die
+                    self.log(f"[IPv6] ✗ No connectivity: {new_ipv6} → marking as DEAD")
+                    self.mark_ip_dead(new_ipv6)
 
         self.log("[IPv6] ✗ All rotation attempts failed")
         return None
