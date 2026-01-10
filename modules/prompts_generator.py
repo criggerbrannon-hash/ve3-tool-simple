@@ -5572,10 +5572,18 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             for idx, shot in enumerate(all_shots):
                 # Chuyển reference_files thành JSON string
                 ref_files = shot.get("reference_files", [])
+                # Chuyển reference_files thành JSON string
                 if isinstance(ref_files, list):
                     ref_files_str = json.dumps(ref_files)
                 else:
                     ref_files_str = str(ref_files)
+
+                # Chuyển characters_used thành JSON list
+                main_char = shot.get("main_character", "nvc")
+                if isinstance(main_char, list):
+                    chars_used_str = json.dumps(main_char)
+                else:
+                    chars_used_str = json.dumps([main_char]) if main_char else '["nvc"]'
 
                 scene_obj = Scene(
                     scene_id=idx + 1,  # Đánh số lại theo thứ tự
@@ -5588,7 +5596,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                     video_prompt=shot.get("img_prompt", ""),  # Dùng chung
                     status_img="pending",
                     status_vid="pending",
-                    characters_used=shot.get("main_character", "nvc"),
+                    characters_used=chars_used_str,
                     location_used=shot.get("location", ""),
                     reference_files=ref_files_str
                 )
@@ -5685,7 +5693,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 video_prompt=fallback_prompt,
                 status_img="pending",
                 status_vid="pending",
-                characters_used="nvc",
+                characters_used='["nvc"]',  # JSON list format
                 location_used="",
                 reference_files='["nvc.png"]'
             )
