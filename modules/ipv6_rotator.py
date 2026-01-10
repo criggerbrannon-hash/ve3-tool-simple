@@ -282,8 +282,9 @@ class IPv6Rotator:
                     self.log("[IPv6] ✗ Failed to get admin privileges")
                     return False
 
-            # Đợi adapter cập nhật
-            time.sleep(3)
+            # Đợi adapter cập nhật (quan trọng: cần đủ thời gian để Windows nhận IPv6)
+            self.log("[IPv6] Waiting for network adapter to update...")
+            time.sleep(5)
 
             # Track IPv4 disabled status
             if self.disable_ipv4:
@@ -376,10 +377,11 @@ class IPv6Rotator:
         try:
             from modules.ipv6_proxy import start_ipv6_proxy, get_ipv6_proxy
 
-            # Đảm bảo IPv6 được set trên interface (chỉ lần đầu)
-            if self.current_ipv6 != ipv6_address:
-                self.log(f"[IPv6] Setting interface to: {ipv6_address}")
-                self.set_ipv6(ipv6_address)
+            # LUÔN set IPv6 trên interface trước khi start proxy
+            # (cần có IP trên interface thì proxy mới bind được)
+            self.log(f"[IPv6] Ensuring interface has: {ipv6_address}")
+            if not self.set_ipv6(ipv6_address):
+                self.log("[IPv6] ⚠️ Failed to set IPv6, proxy may not work correctly", "WARN")
 
             if self._local_proxy is None:
                 # Start proxy lần đầu
