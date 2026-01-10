@@ -1250,7 +1250,30 @@ class DrissionFlowAPI:
             else:
                 self.log("👁️ Headless mode: OFF (Chrome hiển thị)")
 
-            if self._use_webshare and self._webshare_proxy:
+            # === IPv6 PROXY - ƯU TIÊN CAO NHẤT ===
+            # Nếu bật IPv6 rotation, Chrome sẽ dùng local proxy để đi qua IPv6
+            _using_ipv6_proxy = False
+            try:
+                from modules.ipv6_rotator import get_ipv6_rotator
+                rotator = get_ipv6_rotator()
+                if rotator and rotator.enabled and rotator.use_local_proxy:
+                    # Lấy IPv6 hiện tại hoặc dùng cái đầu tiên trong danh sách
+                    current_ipv6 = rotator.get_current_ipv6()
+                    if not current_ipv6 and rotator.ipv6_list:
+                        current_ipv6 = rotator.ipv6_list[0]
+
+                    if current_ipv6:
+                        # Start local proxy với IPv6 hiện tại
+                        rotator._start_local_proxy(current_ipv6)
+                        proxy_url = rotator.get_proxy_url()
+                        if proxy_url:
+                            options.set_argument(f'--proxy-server={proxy_url}')
+                            self.log(f"🌐 IPv6 MODE: Chrome → {proxy_url} → {current_ipv6}")
+                            _using_ipv6_proxy = True
+            except Exception as e:
+                self.log(f"⚠️ IPv6 proxy init error: {e}", "WARN")
+
+            if not _using_ipv6_proxy and self._use_webshare and self._webshare_proxy:
                 from webshare_proxy import get_proxy_manager
                 manager = get_proxy_manager()
 
@@ -1348,23 +1371,10 @@ class DrissionFlowAPI:
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
                         self.log(f"Proxy: Webshare ({remote_proxy_url})")
                         self.log(f"  Mode: IP Authorization")
-            else:
+            elif not _using_ipv6_proxy:
+                # Không có proxy nào (không có webshare, không có IPv6)
                 self._is_rotating_mode = False
-                # Check for IPv6 local proxy
-                try:
-                    from modules.ipv6_rotator import get_ipv6_rotator
-                    rotator = get_ipv6_rotator()
-                    if rotator and rotator.enabled and rotator.use_local_proxy:
-                        proxy_url = rotator.get_proxy_url()
-                        if proxy_url:
-                            options.set_argument(f'--proxy-server={proxy_url}')
-                            self.log(f"🌐 IPv6 Proxy: {proxy_url}")
-                        else:
-                            self.log("⚠️ IPv6 proxy chưa sẵn sàng - chạy không có proxy", "WARN")
-                    else:
-                        self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
-                except:
-                    self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
+                self.log("⚠️ Không có proxy - chạy direct connection", "WARN")
 
             # Tắt Chrome đang dùng profile này trước (tránh conflict)
             self._kill_chrome_using_profile()

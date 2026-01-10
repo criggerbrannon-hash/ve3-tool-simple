@@ -376,6 +376,11 @@ class IPv6Rotator:
         try:
             from modules.ipv6_proxy import start_ipv6_proxy, get_ipv6_proxy
 
+            # Đảm bảo IPv6 được set trên interface (chỉ lần đầu)
+            if self.current_ipv6 != ipv6_address:
+                self.log(f"[IPv6] Setting interface to: {ipv6_address}")
+                self.set_ipv6(ipv6_address)
+
             if self._local_proxy is None:
                 # Start proxy lần đầu
                 self._local_proxy = start_ipv6_proxy(
