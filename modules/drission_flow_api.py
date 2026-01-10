@@ -641,15 +641,17 @@ JS_SELECT_VIDEO_MODE_STEP2 = '''
 })();
 '''
 
-# Bước 3: Tìm và click option
+# Bước 3: Tìm và click option (hỗ trợ cả tiếng Việt và Anh)
 JS_SELECT_VIDEO_MODE_STEP3 = '''
 (function() {
     var allSpans = document.querySelectorAll('span');
     for (var el of allSpans) {
-        var text = (el.textContent || '').trim();
-        if (text === 'Tạo video từ các thành phần') {
+        var text = (el.textContent || '').trim().toLowerCase();
+        // Vietnamese: "Tạo video từ các thành phần"
+        // English: "Create video from assets" / "Generate video from assets"
+        if (text.includes('video') && (text.includes('thành phần') || text.includes('assets') || text.includes('elements'))) {
             el.click();
-            console.log('[VIDEO] Clicked: Tao video tu cac thanh phan');
+            console.log('[VIDEO] Clicked: ' + text);
             return 'CLICKED';
         }
     }
@@ -689,15 +691,17 @@ JS_SELECT_T2V_MODE_STEP2 = '''
 })();
 '''
 
-# T2V Mode - Bước 3: Tìm và click option "Từ văn bản sang video"
-# Dùng điều kiện: chứa "video" + length 22 (vì Unicode khác nên không dùng ===)
+# T2V Mode - Bước 3: Tìm và click option "Từ văn bản sang video" / "Text to video"
+# Hỗ trợ cả tiếng Việt và Anh
 JS_SELECT_T2V_MODE_STEP3 = '''
 (function() {
     var allSpans = document.querySelectorAll('span');
     for (var el of allSpans) {
-        var text = (el.textContent || '').trim();
-        // "Từ văn bản sang video" có length 22, các option khác length 27
-        if (text.includes('video') && text.length === 22) {
+        var text = (el.textContent || '').trim().toLowerCase();
+        // Vietnamese: "Từ văn bản sang video"
+        // English: "Text to video"
+        if ((text.includes('văn bản') && text.includes('video')) ||
+            (text.includes('text') && text.includes('video') && !text.includes('assets'))) {
             el.click();
             console.log('[T2V] Clicked: ' + text);
             return 'CLICKED';
@@ -742,7 +746,7 @@ class DrissionFlowAPI:
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
         # Chrome portable - dùng Chrome đã đăng nhập sẵn
-        chrome_portable: str = "",  # Đường dẫn Chrome portable (VD: C:\KP\KP.exe)
+        chrome_portable: str = "",  # Đường dẫn Chrome portable (VD: C:\ve3\chrome.exe)
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -872,6 +876,10 @@ class DrissionFlowAPI:
 
         # Model fallback: khi quota exceeded (429), chuyển từ GEM_PIX_2 (Pro) sang GEM_PIX
         self._use_fallback_model = False  # True = dùng nano banana (GEM_PIX) thay vì pro (GEM_PIX_2)
+
+        # IPv6 rotation: đếm 403 liên tiếp, sau 3 lần thì đổi IPv6
+        self._consecutive_403 = 0
+        self._max_403_before_ipv6 = 3  # Số lần 403 liên tiếp trước khi đổi IPv6
 
     def log(self, msg: str, level: str = "INFO"):
         """Log message - chỉ dùng 1 trong 2: callback hoặc print."""
@@ -1137,7 +1145,7 @@ class DrissionFlowAPI:
             options.set_local_port(self.chrome_port)
 
             # === AUTO DETECT CHROME PORTABLE ===
-            # Tự động tìm Chrome portable tại: C:\Users\{username}\Documents\KP\KP.exe
+            # Tự động tìm Chrome portable tại: C:\Users\{username}\Documents\ve3\chrome.exe
             chrome_exe = None
             user_data = None
             import platform
@@ -1148,25 +1156,40 @@ class DrissionFlowAPI:
                 chrome_exe = os.path.expandvars(self._chrome_portable)
                 chrome_dir = Path(chrome_exe).parent
                 self.log(f"[CHROME] Dùng chrome_portable: {chrome_exe}")
-                # User Data có thể ở: KP/User Data hoặc KP/Data/profile
+                # User Data có thể ở: ve3/User Data hoặc ve3/Data/profile
                 for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
                     if data_path.exists():
                         user_data = data_path
                         break
 
-            # 2. Tự động detect Chrome portable tại Documents\KP\KP.exe
+            # 2. Tự động detect Chrome portable
             if not chrome_exe and platform.system() == 'Windows':
-                home = Path.home()  # C:\Users\{username}
-                kp_chrome = home / "Documents" / "KP" / "KP.exe"
-                if kp_chrome.exists():
-                    chrome_exe = str(kp_chrome)
-                    kp_dir = kp_chrome.parent
-                    # Tìm User Data: KP/Data/profile hoặc KP/User Data
-                    for data_path in [kp_dir / "Data" / "profile", kp_dir / "User Data"]:
-                        if data_path.exists():
-                            user_data = data_path
-                            break
-                    self.log(f"[AUTO] Phat hien Chrome: {chrome_exe}")
+                chrome_locations = []
+
+                # 2a. Ưu tiên: Thư mục tool/GoogleChromePortable/GoogleChromePortable.exe
+                tool_dir = Path(__file__).parent.parent  # ve3-tool-simple/
+                chrome_locations.append(tool_dir / "GoogleChromePortable" / "GoogleChromePortable.exe")
+
+                # 2b. Fallback: Documents\GoogleChromePortable\
+                home = Path.home()
+                chrome_locations.append(home / "Documents" / "GoogleChromePortable" / "GoogleChromePortable.exe")
+
+                # 2c. Legacy paths (ve3)
+                for chrome_name in ["ve3.exe", "chrome.exe", "Chrome.exe"]:
+                    chrome_locations.append(home / "Documents" / "ve3" / chrome_name)
+
+                # Tìm Chrome portable
+                for chrome_path in chrome_locations:
+                    if chrome_path.exists():
+                        chrome_exe = str(chrome_path)
+                        chrome_dir = chrome_path.parent
+                        # Tìm User Data: Data/profile hoặc User Data
+                        for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
+                            if data_path.exists():
+                                user_data = data_path
+                                break
+                        self.log(f"[AUTO] Phat hien Chrome: {chrome_exe}")
+                        break
 
             # 3. Dùng Chrome portable nếu tìm thấy
             if chrome_exe:
@@ -1227,7 +1250,36 @@ class DrissionFlowAPI:
             else:
                 self.log("👁️ Headless mode: OFF (Chrome hiển thị)")
 
-            if self._use_webshare and self._webshare_proxy:
+            # === IPv6 MODE - ÉP CHROME DÙNG IPv6 QUA LOCAL PROXY ===
+            # Proxy CHỈ kết nối IPv6, KHÔNG fallback IPv4
+            _using_ipv6_proxy = False
+            try:
+                from modules.ipv6_rotator import get_ipv6_rotator
+                rotator = get_ipv6_rotator()
+                if rotator and rotator.enabled:
+                    # Tìm IPv6 hoạt động (test connectivity trước khi dùng)
+                    self.log(f"🌐 IPv6 MODE: Finding working IPv6...")
+                    working_ipv6 = rotator.init_with_working_ipv6()  # Thử hết danh sách
+
+                    if working_ipv6:
+                        # Start local proxy (CHỈ kết nối IPv6, không fallback)
+                        from modules.ipv6_proxy import start_ipv6_proxy
+                        proxy = start_ipv6_proxy(
+                            ipv6_address=working_ipv6,
+                            port=1088,
+                            log_func=self.log
+                        )
+                        if proxy:
+                            options.set_argument('--proxy-server=socks5://127.0.0.1:1088')
+                            self.log(f"🌐 IPv6 MODE: Chrome → SOCKS5 → IPv6 ONLY")
+                            self.log(f"   IPv6: {working_ipv6}")
+                            _using_ipv6_proxy = True
+                    else:
+                        self.log(f"⚠️ No working IPv6 found, continuing without IPv6", "WARN")
+            except Exception as e:
+                self.log(f"⚠️ IPv6 init error: {e}", "WARN")
+
+            if not _using_ipv6_proxy and self._use_webshare and self._webshare_proxy:
                 from webshare_proxy import get_proxy_manager
                 manager = get_proxy_manager()
 
@@ -1325,9 +1377,10 @@ class DrissionFlowAPI:
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
                         self.log(f"Proxy: Webshare ({remote_proxy_url})")
                         self.log(f"  Mode: IP Authorization")
-            else:
+            elif not _using_ipv6_proxy:
+                # Không có proxy nào (không có webshare, không có IPv6)
                 self._is_rotating_mode = False
-                self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
+                self.log("⚠️ Không có proxy - chạy direct connection", "WARN")
 
             # Tắt Chrome đang dùng profile này trước (tránh conflict)
             self._kill_chrome_using_profile()
@@ -2266,7 +2319,9 @@ class DrissionFlowAPI:
 
                 # Nếu lỗi 403, RESET CHROME NGAY (không retry)
                 if "403" in error:
-                    self.log(f"⚠️ 403 error - RESET CHROME ngay!", "WARN")
+                    # Tăng counter 403 liên tiếp
+                    self._consecutive_403 += 1
+                    self.log(f"⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
 
                     # Kill Chrome
                     self._kill_chrome()
@@ -2278,10 +2333,16 @@ class DrissionFlowAPI:
                         success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "403 reCAPTCHA")
                         self.log(f"  → Webshare rotate: {msg}", "WARN")
 
-                    # Restart Chrome
-                    self.log("  → Restart Chrome...")
+                    # === IPv6 ROTATION: Sau 3 lần 403 liên tiếp, đổi IPv6 ===
+                    rotate_ipv6 = False
+                    if self._consecutive_403 >= self._max_403_before_ipv6:
+                        self.log(f"  → 🔄 Đã 403 {self._consecutive_403} lần liên tiếp - Đổi IPv6...")
+                        rotate_ipv6 = True
+                        self._consecutive_403 = 0  # Reset counter
+
+                    # Restart Chrome (có thể kèm IPv6 rotation)
                     project_url = getattr(self, '_current_project_url', None)
-                    if self.setup(project_url=project_url):
+                    if self.restart_chrome(rotate_ipv6=rotate_ipv6):
                         self.log("  → Chrome restarted, tiếp tục...")
                         continue  # Thử lại 1 lần sau khi reset
                     else:
@@ -2400,6 +2461,11 @@ class DrissionFlowAPI:
                 self.log("🔄 Refreshed + ready")
         except Exception as e:
             self.log(f"⚠️ Refresh warning: {e}", "WARN")
+
+        # Reset 403 counter khi thành công
+        if self._consecutive_403 > 0:
+            self.log(f"[IPv6] Reset 403 counter (was {self._consecutive_403})")
+            self._consecutive_403 = 0
 
         return True, images, None
 
@@ -2622,7 +2688,9 @@ class DrissionFlowAPI:
 
                     # === 403 error - RESET CHROME NGAY ===
                     if "403" in error:
-                        self.log(f"[I2V] ⚠️ 403 error - RESET CHROME ngay!", "WARN")
+                        # Tăng counter 403 liên tiếp
+                        self._consecutive_403 += 1
+                        self.log(f"[I2V] ⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
 
                         # Kill Chrome
                         self._kill_chrome()
@@ -2634,9 +2702,15 @@ class DrissionFlowAPI:
                             success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 403")
                             self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
 
-                        # Restart Chrome
-                        self.log("[I2V] → Restart Chrome...")
-                        if self.setup(project_url=retry_project_url):
+                        # === IPv6 ROTATION: Sau 3 lần 403 liên tiếp, đổi IPv6 ===
+                        rotate_ipv6 = False
+                        if self._consecutive_403 >= self._max_403_before_ipv6:
+                            self.log(f"[I2V] → 🔄 Đã 403 {self._consecutive_403} lần liên tiếp - Đổi IPv6...")
+                            rotate_ipv6 = True
+                            self._consecutive_403 = 0  # Reset counter
+
+                        # Restart Chrome (có thể kèm IPv6 rotation)
+                        if self.restart_chrome(rotate_ipv6=rotate_ipv6):
                             self.log("[I2V] → Chrome restarted, tiếp tục...")
                             continue  # Thử lại 1 lần sau khi reset
                         else:
@@ -2663,6 +2737,10 @@ class DrissionFlowAPI:
                         video_url = videos[0].get("video", {}).get("fifeUrl") or videos[0].get("fifeUrl")
                         if video_url:
                             self.log(f"[I2V] ✓ Video ready (no poll): {video_url[:60]}...")
+                            # Reset 403 counter khi thành công
+                            if self._consecutive_403 > 0:
+                                self.log(f"[IPv6] Reset 403 counter (was {self._consecutive_403})")
+                                self._consecutive_403 = 0
                             return True, video_url, None
 
                 operations = result.get("operations", [])
@@ -2683,6 +2761,10 @@ class DrissionFlowAPI:
 
                 if video_url:
                     self.log(f"[I2V] Video ready: {video_url[:60]}...")
+                    # Reset 403 counter khi thành công
+                    if self._consecutive_403 > 0:
+                        self.log(f"[IPv6] Reset 403 counter (was {self._consecutive_403})")
+                        self._consecutive_403 = 0
                     return True, video_url, None
                 else:
                     last_error = "Timeout waiting for video"
@@ -2911,6 +2993,11 @@ class DrissionFlowAPI:
             except Exception as e:
                 self.log(f"[I2V-Chrome] Download error: {e}", "ERROR")
                 return False, video_url, str(e)
+
+        # Reset 403 counter khi thành công
+        if self._consecutive_403 > 0:
+            self.log(f"[IPv6] Reset 403 counter (was {self._consecutive_403})")
+            self._consecutive_403 = 0
 
         return True, video_url, None
 
@@ -3806,15 +3893,33 @@ class DrissionFlowAPI:
             self.log(f"[!] Proxy auth error: {e}", "WARN")
             self.log("    → Whitelist IP: 14.224.157.134 trên Webshare")
 
-    def restart_chrome(self) -> bool:
+    def restart_chrome(self, rotate_ipv6: bool = False) -> bool:
         """
         Restart Chrome với proxy mới sau khi rotate.
         Proxy đã được rotate trước khi gọi hàm này.
         setup() sẽ lấy proxy mới từ manager.get_proxy_for_worker(worker_id).
 
+        Args:
+            rotate_ipv6: Nếu True, đổi IPv6 trước khi restart Chrome
+
         Returns:
             True nếu restart thành công
         """
+        # === IPv6 ROTATION (khi bị 403 nhiều lần) ===
+        if rotate_ipv6:
+            try:
+                from modules.ipv6_rotator import get_ipv6_rotator
+                rotator = get_ipv6_rotator()
+                if rotator and rotator.enabled:
+                    self.log("🔄 Rotating IPv6 before restart...")
+                    new_ip = rotator.rotate()
+                    if new_ip:
+                        self.log(f"✓ IPv6 changed to: {new_ip}")
+                    else:
+                        self.log("⚠️ IPv6 rotation failed, continuing anyway...")
+            except Exception as e:
+                self.log(f"⚠️ IPv6 rotation error: {e}")
+
         if self._use_webshare:
             # Lấy proxy mới để log
             from webshare_proxy import get_proxy_manager
@@ -3825,7 +3930,7 @@ class DrissionFlowAPI:
             else:
                 self.log(f"🔄 Restart Chrome [Worker {self.worker_id}]...")
         else:
-            self.log("🔄 Restart Chrome với proxy mới...")
+            self.log("🔄 Restart Chrome...")
 
         # Close Chrome và proxy bridge hiện tại
         self.close()

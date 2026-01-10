@@ -267,7 +267,7 @@ class BrowserFlowGenerator:
                 self._log(f"Chrome: {chrome_portable}")
 
                 # Tìm User Data của Chrome portable
-                # GoogleChromePortable: KP/Data/profile
+                # GoogleChromePortable/Data/profile hoặc GoogleChromePortable/User Data
                 for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
                     if data_path.exists():
                         chrome_portable_user_data = data_path
@@ -1199,14 +1199,17 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
             self._log(f"[REF] Final reference_files: {reference_files}")
 
-            # VERIFY: Check if prompt has filename annotations
+            # VERIFY: Check if prompt has filename annotations (case-insensitive)
             has_annotations = False
+            prompt_lower = prompt.lower()
             for ref in reference_files:
+                ref_lower = ref.lower()
                 ref_name = ref.replace('.png', '').replace('.jpg', '')
-                if f"({ref})" in prompt or f"({ref_name}.png)" in prompt:
+                ref_name_lower = ref_name.lower()
+                if f"({ref_lower})" in prompt_lower or f"({ref_name_lower}.png)" in prompt_lower:
                     has_annotations = True
                     break
-            if "(reference:" in prompt:
+            if "(reference:" in prompt_lower:
                 has_annotations = True
 
             if reference_files:
@@ -3294,8 +3297,33 @@ class BrowserFlowGenerator:
                 if 'config' in wb.sheetnames:
                     ws = wb['config']
                     config_keys_found = []
-                    for row in ws.iter_rows(min_row=2, max_row=20, values_only=True):
-                        if row and len(row) >= 2:
+
+                    # DEBUG: Print first few rows to see actual data
+                    self._log(f"[DEBUG] Config sheet max_row={ws.max_row}, max_col={ws.max_column}")
+                    for row_idx in range(1, min(6, ws.max_row + 1)):
+                        row_vals = [ws.cell(row=row_idx, column=c).value for c in range(1, min(5, ws.max_column + 1))]
+                        self._log(f"[DEBUG] Row {row_idx}: {row_vals}")
+
+                    # Scan all columns to find key-value pairs (not just A,B)
+                    for row in ws.iter_rows(min_row=1, max_row=30, values_only=True):
+                        if not row:
+                            continue
+
+                        # Try to find project_url anywhere in the row
+                        for i, cell_val in enumerate(row):
+                            if cell_val and isinstance(cell_val, str):
+                                cell_str = str(cell_val).strip()
+                                # Direct URL match
+                                if '/project/' in cell_str and cell_str.startswith('http'):
+                                    saved_project_url = cell_str
+                                    self._log(f"📂 Tìm thấy project URL: {saved_project_url[:60]}...")
+                                    break
+
+                        if saved_project_url:
+                            break
+
+                        # Standard key-value format (column A = key, column B = value)
+                        if len(row) >= 2 and row[0]:
                             key = str(row[0] or '').strip().lower()
                             val = str(row[1] or '').strip() if row[1] else ''
                             config_keys_found.append(key)
@@ -3311,6 +3339,7 @@ class BrowserFlowGenerator:
                                 if Path(val).exists():
                                     saved_chrome_profile = val
                                     self._log(f"📂 Tìm thấy Chrome profile từ Excel: {val}")
+
                     if not saved_project_url:
                         self._log(f"[DEBUG] Config keys: {config_keys_found}")
                 else:
@@ -3404,18 +3433,33 @@ class BrowserFlowGenerator:
                         import openpyxl
                         wb = openpyxl.load_workbook(excel_path)
                         if 'config' not in wb.sheetnames:
-                            wb.create_sheet('config')
-                        ws = wb['config']
+                            ws = wb.create_sheet('config')
+                            # Thêm header row
+                            ws['A1'] = 'key'
+                            ws['B1'] = 'value'
+                        else:
+                            ws = wb['config']
+                            # Đảm bảo có header
+                            if not ws['A1'].value:
+                                ws['A1'] = 'key'
+                                ws['B1'] = 'value'
 
                         # Tìm hoặc thêm row cho flow_project_url
                         found = False
-                        for row_num in range(2, ws.max_row + 1):
-                            if ws.cell(row=row_num, column=1).value == 'flow_project_url':
+                        for row_num in range(2, min(ws.max_row + 1, 50)):  # Giới hạn 50 rows
+                            cell_val = ws.cell(row=row_num, column=1).value
+                            if cell_val and str(cell_val).strip().lower() == 'flow_project_url':
                                 ws.cell(row=row_num, column=2, value=new_project_url)
                                 found = True
                                 break
                         if not found:
-                            next_row = ws.max_row + 1
+                            # Tìm row trống đầu tiên (sau header)
+                            next_row = 2
+                            for r in range(2, 50):
+                                if not ws.cell(row=r, column=1).value:
+                                    next_row = r
+                                    break
+                                next_row = r + 1
                             ws.cell(row=next_row, column=1, value='flow_project_url')
                             ws.cell(row=next_row, column=2, value=new_project_url)
 
@@ -3423,13 +3467,20 @@ class BrowserFlowGenerator:
                         profile_path = str(drission_api.profile_dir) if hasattr(drission_api, 'profile_dir') else ''
                         if profile_path:
                             found = False
-                            for row_num in range(2, ws.max_row + 1):
-                                if ws.cell(row=row_num, column=1).value == 'chrome_profile_path':
+                            for row_num in range(2, min(ws.max_row + 1, 50)):
+                                cell_val = ws.cell(row=row_num, column=1).value
+                                if cell_val and str(cell_val).strip().lower() == 'chrome_profile_path':
                                     ws.cell(row=row_num, column=2, value=profile_path)
                                     found = True
                                     break
                             if not found:
-                                next_row = ws.max_row + 1
+                                # Tìm row trống đầu tiên
+                                next_row = 2
+                                for r in range(2, 50):
+                                    if not ws.cell(row=r, column=1).value:
+                                        next_row = r
+                                        break
+                                    next_row = r + 1
                                 ws.cell(row=next_row, column=1, value='chrome_profile_path')
                                 ws.cell(row=next_row, column=2, value=profile_path)
 
@@ -4062,10 +4113,12 @@ class BrowserFlowGenerator:
                             ws = wb.create_sheet('config')
                             ws['A1'] = 'key'
                             ws['B1'] = 'value'
-                            next_row = 2
                         else:
                             ws = wb['config']
-                            next_row = ws.max_row + 1
+                            # Đảm bảo có header nếu sheet đã tồn tại nhưng thiếu
+                            if not ws['A1'].value or str(ws['A1'].value).strip().lower() != 'key':
+                                ws['A1'] = 'key'
+                                ws['B1'] = 'value'
 
                         # Lấy project URL để lưu (cho lần chạy tiếp theo vào đúng project)
                         project_url = getattr(drission_api, '_current_project_url', '')
@@ -4090,14 +4143,21 @@ class BrowserFlowGenerator:
                             # Tìm row có key này để update
                             found = False
                             for row_num in range(2, ws.max_row + 1):
-                                if ws.cell(row=row_num, column=1).value == key:
+                                cell_key = ws.cell(row=row_num, column=1).value
+                                if cell_key and str(cell_key).strip().lower() == key.lower():
                                     ws.cell(row=row_num, column=2, value=value)
                                     found = True
                                     break
                             if not found:
+                                # Tìm row trống đầu tiên (sau header)
+                                next_row = 2
+                                for r in range(2, 50):
+                                    if not ws.cell(row=r, column=1).value:
+                                        next_row = r
+                                        break
+                                    next_row = r + 1
                                 ws.cell(row=next_row, column=1, value=key)
                                 ws.cell(row=next_row, column=2, value=value)
-                                next_row += 1
 
                         wb.save(excel_path)
                         wb.close()

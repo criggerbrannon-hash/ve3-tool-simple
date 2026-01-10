@@ -141,6 +141,87 @@ def has_excel_with_prompts(project_dir: Path, name: str) -> bool:
         return False
 
 
+def needs_api_completion(project_dir: Path, name: str) -> bool:
+    """
+    Check if Excel has [FALLBACK] prompts that need API completion.
+    Returns True if any prompt starts with [FALLBACK].
+    """
+    excel_path = project_dir / f"{name}_prompts.xlsx"
+    if not excel_path.exists():
+        return False
+
+    try:
+        from modules.excel_manager import PromptWorkbook
+        wb = PromptWorkbook(str(excel_path))
+        scenes = wb.get_scenes()
+
+        for scene in scenes:
+            img_prompt = scene.img_prompt or ""
+            if img_prompt.startswith("[FALLBACK]"):
+                return True
+        return False
+    except:
+        return False
+
+
+def complete_excel_with_api(project_dir: Path, name: str) -> bool:
+    """
+    Complete Excel prompts using API (V2 flow).
+    Called when Excel has [FALLBACK] prompts from run_srt.py.
+    """
+    import yaml
+
+    print(f"  🤖 Completing Excel with API (V2 flow)...")
+
+    try:
+        # Load config
+        cfg = {}
+        cfg_file = TOOL_DIR / "config" / "settings.yaml"
+        if cfg_file.exists():
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+
+        # Collect API keys
+        deepseek_key = cfg.get('deepseek_api_key', '')
+        groq_keys = cfg.get('groq_api_keys', [])
+        gemini_keys = cfg.get('gemini_api_keys', [])
+
+        if deepseek_key:
+            cfg['deepseek_api_keys'] = [deepseek_key]
+        if not groq_keys and not gemini_keys and not deepseek_key:
+            print(f"  ⚠️ No API keys configured, using fallback prompts")
+            return True  # Continue with fallback
+
+        # Prefer DeepSeek for prompts
+        cfg['preferred_provider'] = 'deepseek' if deepseek_key else ('groq' if groq_keys else 'gemini')
+
+        # Force V2 flow
+        cfg['use_v2_flow'] = True
+
+        # Delete existing Excel to regenerate
+        excel_path = project_dir / f"{name}_prompts.xlsx"
+        if excel_path.exists():
+            excel_path.unlink()
+            print(f"  🗑️ Deleted fallback Excel, regenerating with API...")
+
+        # Generate prompts with API
+        from modules.prompts_generator import PromptGenerator
+        gen = PromptGenerator(cfg)
+
+        if gen.generate_for_project(project_dir, name, overwrite=True):
+            print(f"  ✅ Excel completed with API prompts")
+            return True
+        else:
+            print(f"  ❌ Failed to generate API prompts")
+            return False
+
+    except Exception as e:
+        print(f"  ❌ API completion error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def delete_master_source(code: str):
     """Delete project from master PROJECTS after copying to local."""
     try:
@@ -300,10 +381,34 @@ def process_project(code: str, callback=None) -> bool:
     if not local_dir:
         return False
 
-    # Step 3: Check Excel
-    if not has_excel_with_prompts(local_dir, code):
-        log(f"  ⏭️ Excel not ready (no prompts), skip!")
-        return False
+    # Step 3: Check Excel - nếu không có thì tạo bằng API
+    excel_path = local_dir / f"{code}_prompts.xlsx"
+    srt_path = local_dir / f"{code}.srt"
+
+    if not excel_path.exists():
+        # Không có Excel - tạo mới bằng API
+        if srt_path.exists():
+            log(f"  📋 No Excel found, creating with API...")
+            if not complete_excel_with_api(local_dir, code):
+                log(f"  ❌ Failed to create Excel, skip!")
+                return False
+        else:
+            log(f"  ⏭️ No Excel and no SRT, skip!")
+            return False
+    elif not has_excel_with_prompts(local_dir, code):
+        # Excel exists but empty/corrupt - recreate
+        log(f"  📋 Excel empty/corrupt, recreating with API...")
+        excel_path.unlink()  # Delete corrupt Excel
+        if not complete_excel_with_api(local_dir, code):
+            log(f"  ❌ Failed to recreate Excel, skip!")
+            return False
+
+    # Step 3.5: Complete Excel with API if needed (fallback prompts)
+    if needs_api_completion(local_dir, code):
+        log(f"  📋 Excel has [FALLBACK] prompts, completing with API...")
+        if not complete_excel_with_api(local_dir, code):
+            log(f"  ⚠️ API completion failed, using fallback prompts", "WARN")
+            # Continue with fallback prompts if API fails
 
     # Step 4: Create images/videos
     try:
@@ -371,9 +476,14 @@ def scan_incomplete_local_projects() -> list:
         if is_local_complete(item, code):
             continue
 
-        # Check if has Excel with prompts (ready to process)
+        # Check if has Excel with prompts OR has SRT (can create Excel)
+        srt_path = item / f"{code}.srt"
         if has_excel_with_prompts(item, code):
             print(f"    - {code}: incomplete (has Excel, no images) → will continue")
+            incomplete.append(code)
+        elif srt_path.exists():
+            # Có SRT nhưng không có Excel - worker sẽ tự tạo
+            print(f"    - {code}: has SRT, no Excel → will create with API")
             incomplete.append(code)
 
     return sorted(incomplete)
@@ -406,18 +516,21 @@ def scan_master_projects() -> list:
             print(f"    - {code}: already in VISUAL ✓")
             continue
 
-        # Check if has Excel (có thể chưa có prompts)
+        # Check if has Excel or SRT
         excel_path = item / f"{code}_prompts.xlsx"
-        if not excel_path.exists():
-            print(f"    - {code}: no Excel file")
-            continue
+        srt_path = item / f"{code}.srt"
 
-        # Check if has prompts
         if has_excel_with_prompts(item, code):
             print(f"    - {code}: ready (has prompts) ✓")
             pending.append(code)
-        else:
+        elif srt_path.exists():
+            # Có SRT nhưng không có Excel - worker sẽ tự tạo
+            print(f"    - {code}: has SRT, no Excel → will create with API")
+            pending.append(code)
+        elif excel_path.exists():
             print(f"    - {code}: Excel exists but no prompts yet")
+        else:
+            print(f"    - {code}: no Excel and no SRT")
 
     return sorted(pending)
 

@@ -10,8 +10,11 @@ project_root: "./VE3_TOOL"
 # Chrome này đã đăng nhập Google sẵn, không cần tạo profile mới
 
 # Đường dẫn đến Chrome portable (đã đăng nhập Google)
-# %USERNAME% sẽ tự động thay bằng tên user của máy
-chrome_portable: "C:\\Users\\%USERNAME%\\Documents\\KP\\KP.exe"
+# Để trống = tự động detect theo thứ tự:
+#   1. GoogleChromePortable/GoogleChromePortable.exe (trong thư mục tool)
+#   2. Documents/GoogleChromePortable/GoogleChromePortable.exe
+#   3. Documents/ve3/ve3.exe (legacy)
+chrome_portable: ""
 
 # Parallel Chrome - Chạy nhiều Chrome song song
 # Format: "worker/total" - VD: "1/2", "2/4"
@@ -237,3 +240,35 @@ browser_delay_between_prompts: 2000
 
 # Timeout cho moi anh (giay)
 browser_generate_timeout: 120
+
+# ============================================================================
+# IPv6 ROTATION Settings (Đổi IPv6 khi bị 403)
+# ============================================================================
+# Khi Chrome bị 403 liên tục, tự động đổi IPv6 để bypass
+
+ipv6_rotation:
+  enabled: false              # Bật/tắt tính năng đổi IPv6
+
+  # Interface name (tên adapter mạng)
+  # Chạy "netsh interface ipv6 show addresses" để xem tên
+  interface_name: "Ethernet"  # Hoặc "Wi-Fi", "vEthernet (WSL)"...
+
+  # IPv6 Subnet prefix (VD: 2001:db8::/56)
+  # Chỉ cần prefix, tool sẽ tự random phần còn lại
+  subnet_prefix: ""           # VD: "2001:db8:1234:5600"
+  prefix_length: 56           # /56 = 256 subnets
+
+  # Số lần 403 liên tiếp trước khi đổi IPv6
+  max_403_before_rotate: 3
+
+  # Tắt IPv4 để ép Chrome dùng IPv6
+  # CẢNH BÁO: Nếu dùng Remote Desktop qua IPv4, để FALSE!
+  disable_ipv4: false         # false = giữ IPv4 cho RDP
+
+  # KHÔNG CẦN proxy nữa - Tool set Windows prefix policy để ưu tiên IPv6
+  # Chrome sẽ tự động dùng IPv6 cho outgoing connections
+  use_local_proxy: false      # false = Chrome chạy trực tiếp, không qua proxy
+  local_proxy_port: 1088      # (không dùng nếu use_local_proxy=false)
+
+  # Gateway IPv6 (nếu cần)
+  gateway: ""                 # Để trống nếu không cần

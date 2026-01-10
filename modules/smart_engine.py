@@ -24,8 +24,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 
-# Ken Burns effects for static images
-from .ken_burns import KenBurnsGenerator, KenBurnsEffect, KenBurnsIntensity, get_ken_burns_filter
+# Ken Burns effects - lazy import (only needed for _compose_video on master)
+# from .ken_burns import KenBurnsGenerator, KenBurnsEffect, KenBurnsIntensity, get_ken_burns_filter
 
 
 # ============================================================================
@@ -3336,7 +3336,8 @@ class SmartEngine:
                 except:
                     pass
 
-                # Ken Burns generator cho ảnh tĩnh
+                # Ken Burns generator cho ảnh tĩnh (lazy import)
+                from .ken_burns import KenBurnsGenerator
                 ken_burns = KenBurnsGenerator(1920, 1080, intensity=kb_intensity)
                 last_kb_effect = None  # Tránh lặp hiệu ứng liền kề
 
