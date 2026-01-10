@@ -1739,7 +1739,25 @@ class DrissionFlowAPI:
 
             for i in range(timeout):
                 try:
-                    # Kiểm tra textarea tồn tại VÀ visible
+                    # === PHƯƠNG PHÁP 1: Dùng DrissionPage element ===
+                    textarea = self.driver.ele('tag:textarea', timeout=1)
+                    if textarea:
+                        # Kiểm tra có location/size không
+                        try:
+                            loc = textarea.rect.location
+                            size = textarea.rect.size
+                            if loc and size and size.get('width', 0) > 0 and size.get('height', 0) > 0:
+                                self.log(f"[TEXTAREA] ✓ Found via DrissionPage sau {i+1}s")
+                                # Scroll vào view
+                                try:
+                                    textarea.scroll.to_see()
+                                except:
+                                    pass
+                                return True
+                        except:
+                            pass
+
+                    # === PHƯƠNG PHÁP 2: Dùng JavaScript (fallback) ===
                     result = self.driver.run_js("""
                         (function() {
                             var textarea = document.querySelector('textarea');
@@ -1755,34 +1773,21 @@ class DrissionFlowAPI:
                             if (style.visibility === 'hidden') return 'visibility_hidden';
                             if (style.opacity === '0') return 'opacity_0';
 
-                            // Kiểm tra có trong viewport không
-                            var inViewport = (
-                                rect.top >= 0 &&
-                                rect.left >= 0 &&
-                                rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-                                rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-                            );
-
-                            if (!inViewport) {
-                                // Scroll vào view
-                                textarea.scrollIntoView({block: 'center', behavior: 'instant'});
-                                return 'scrolled';
-                            }
-
+                            // Scroll vào view và trả về visible
+                            textarea.scrollIntoView({block: 'center', behavior: 'instant'});
                             return 'visible';
                         })();
                     """)
 
                     if result == 'visible':
-                        self.log(f"[TEXTAREA] ✓ Textarea visible sau {i+1}s")
+                        self.log(f"[TEXTAREA] ✓ Textarea visible (JS) sau {i+1}s")
                         return True
-                    elif result == 'scrolled':
-                        self.log("[TEXTAREA] Scrolled vào view, đợi thêm...")
-                        time.sleep(0.5)
-                        continue
                     elif result == 'not_found':
                         # Chưa có textarea, đợi tiếp
-                        pass
+                        self.log(f"[TEXTAREA] Chưa tìm thấy textarea... ({i+1}s)")
+                    elif result is None:
+                        # JS không chạy được - có thể page đang load
+                        self.log(f"[TEXTAREA] Page đang load... ({i+1}s)")
                     else:
                         self.log(f"[TEXTAREA] Chưa visible: {result}")
 
