@@ -1813,6 +1813,7 @@ class DrissionFlowAPI:
         """
         Paste prompt bằng Ctrl+V thay vì JS input.
         Tránh bị 403 do bot detection.
+        Đợi textarea visible trước khi click.
 
         Args:
             textarea: Element textarea đã tìm thấy
@@ -1824,22 +1825,33 @@ class DrissionFlowAPI:
         import pyperclip
 
         try:
+            # 0. QUAN TRỌNG: Đợi textarea visible trước khi click
+            if not self._wait_for_textarea_visible(timeout=10, max_refresh=2):
+                self.log("⚠️ Textarea không visible, fallback to JS", "WARN")
+                raise Exception("Textarea not visible")
+
             # 1. Copy prompt vào clipboard
             pyperclip.copy(prompt)
             self.log(f"→ Copied to clipboard ({len(prompt)} chars)")
 
-            # 2. Click vào textarea
+            # 2. Tìm lại textarea sau khi đã visible (có thể bị stale)
+            textarea = self._find_textarea()
+            if not textarea:
+                self.log("⚠️ Textarea không tìm thấy, fallback to JS", "WARN")
+                raise Exception("Textarea not found")
+
+            # 3. Click vào textarea
             textarea.click()
             time.sleep(0.3)
 
-            # 3. Clear textarea (Ctrl+A rồi Delete)
+            # 4. Clear textarea (Ctrl+A rồi Delete)
             from DrissionPage.common import Keys
             textarea.input(Keys.CTRL_A)
             time.sleep(0.1)
             textarea.input(Keys.DELETE)
             time.sleep(0.1)
 
-            # 4. Paste bằng Ctrl+V
+            # 5. Paste bằng Ctrl+V
             textarea.input(Keys.CTRL_V)
             time.sleep(0.3)
 
@@ -1849,16 +1861,25 @@ class DrissionFlowAPI:
         except ImportError as e:
             # pyperclip not installed, fallback to JS
             self.log(f"⚠️ Import error: {e}, fallback to JS input", "WARN")
-            textarea.clear()
-            time.sleep(0.2)
-            textarea.input(prompt)
+            textarea = self._find_textarea()
+            if textarea:
+                textarea.clear()
+                time.sleep(0.2)
+                textarea.input(prompt)
             return True
 
         except Exception as e:
             self.log(f"⚠️ Ctrl+V failed: {e}, fallback to JS", "WARN")
-            textarea.clear()
-            time.sleep(0.2)
-            textarea.input(prompt)
+            # Đợi và tìm lại textarea
+            time.sleep(1)
+            textarea = self._find_textarea()
+            if textarea:
+                try:
+                    textarea.clear()
+                    time.sleep(0.2)
+                    textarea.input(prompt)
+                except:
+                    pass
             return True
 
     def _setup_window_layout(self):
