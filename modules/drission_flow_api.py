@@ -1257,28 +1257,25 @@ class DrissionFlowAPI:
                 from modules.ipv6_rotator import get_ipv6_rotator
                 rotator = get_ipv6_rotator()
                 if rotator and rotator.enabled:
-                    # Lấy IPv6 hiện tại hoặc dùng cái đầu tiên trong danh sách
-                    current_ipv6 = rotator.get_current_ipv6()
-                    if not current_ipv6 and rotator.ipv6_list:
-                        current_ipv6 = rotator.ipv6_list[0]
+                    # Tìm IPv6 hoạt động (test connectivity trước khi dùng)
+                    self.log(f"🌐 IPv6 MODE: Finding working IPv6...")
+                    working_ipv6 = rotator.init_with_working_ipv6(max_tries=10)
 
-                    if current_ipv6:
-                        # Set IPv6 trên interface
-                        self.log(f"🌐 IPv6 MODE: Setting up {current_ipv6}...")
-                        rotator.set_ipv6(current_ipv6)
-
+                    if working_ipv6:
                         # Start local proxy (CHỈ kết nối IPv6, không fallback)
                         from modules.ipv6_proxy import start_ipv6_proxy
                         proxy = start_ipv6_proxy(
-                            ipv6_address=current_ipv6,
+                            ipv6_address=working_ipv6,
                             port=1088,
                             log_func=self.log
                         )
                         if proxy:
                             options.set_argument('--proxy-server=socks5://127.0.0.1:1088')
                             self.log(f"🌐 IPv6 MODE: Chrome → SOCKS5 → IPv6 ONLY")
-                            self.log(f"   IPv6: {current_ipv6}")
+                            self.log(f"   IPv6: {working_ipv6}")
                             _using_ipv6_proxy = True
+                    else:
+                        self.log(f"⚠️ No working IPv6 found, continuing without IPv6", "WARN")
             except Exception as e:
                 self.log(f"⚠️ IPv6 init error: {e}", "WARN")
 

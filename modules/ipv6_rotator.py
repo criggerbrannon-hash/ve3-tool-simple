@@ -190,6 +190,40 @@ class IPv6Rotator:
             self.log(f"[IPv6] Reset 403 counter (was {self.consecutive_403})")
         self.consecutive_403 = 0
 
+    def init_with_working_ipv6(self, max_tries: int = 10) -> Optional[str]:
+        """
+        Khởi tạo với một IPv6 hoạt động.
+        Thử từng IP trong danh sách cho đến khi tìm được IP có connectivity.
+
+        Args:
+            max_tries: Số IP tối đa thử
+
+        Returns:
+            IPv6 hoạt động hoặc None
+        """
+        if not self.ipv6_list:
+            self.log("[IPv6] No IPv6 list!")
+            return None
+
+        self.log(f"[IPv6] Finding working IPv6 (trying up to {max_tries} IPs)...")
+
+        for i, ipv6 in enumerate(self.ipv6_list[:max_tries]):
+            self.log(f"[IPv6] Trying {i+1}/{max_tries}: {ipv6}")
+
+            if self.set_ipv6(ipv6):
+                # Test connectivity
+                if self.test_ipv6_connectivity():
+                    self.log(f"[IPv6] ✓ Found working IP: {ipv6}")
+                    self.current_index = i
+                    return ipv6
+                else:
+                    self.log(f"[IPv6] ✗ No connectivity: {ipv6}")
+            else:
+                self.log(f"[IPv6] ✗ Failed to set: {ipv6}")
+
+        self.log("[IPv6] ✗ No working IPv6 found!")
+        return None
+
     def get_current_ipv6(self) -> Optional[str]:
         """
         Lấy IPv6 hiện tại của interface (Windows).
