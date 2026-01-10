@@ -85,6 +85,24 @@ def _run_netsh_admin(commands: List[str], log_func=print) -> bool:
         return False
 
 
+def _get_gateway_for_ipv6(ipv6_address: str) -> str:
+    """
+    Tính gateway từ IPv6 address.
+    Gateway = ::1 trong cùng /64 subnet.
+
+    Ví dụ:
+        2001:ee0:b004:1f00::2 → 2001:ee0:b004:1f00::1
+        2001:ee0:b004:1fee::238 → 2001:ee0:b004:1fee::1
+    """
+    # Parse IPv6 address để lấy prefix
+    # Format: 2001:ee0:b004:XXXX::Y
+    parts = ipv6_address.split('::')
+    if len(parts) >= 1:
+        prefix = parts[0]  # "2001:ee0:b004:1f00" hoặc tương tự
+        return f"{prefix}::1"
+    return ""
+
+
 class IPv6Rotator:
     """Quản lý việc đổi IPv6 khi bị block."""
 
@@ -265,9 +283,15 @@ class IPv6Rotator:
             # Bước 2: Thêm IPv6 mới
             commands.append(f'netsh interface ipv6 add address "{self.interface_name}" {new_ipv6}')
 
-            # Bước 3: Set gateway nếu có
-            if self.gateway:
-                commands.append(f'netsh interface ipv6 add route ::/0 "{self.interface_name}" {self.gateway}')
+            # Bước 3: Set gateway - TỰ ĐỘNG tính từ IPv6 address
+            # Gateway phải cùng subnet với IP (VD: 1f00::2 → gateway 1f00::1)
+            auto_gateway = _get_gateway_for_ipv6(new_ipv6)
+            if auto_gateway:
+                self.log(f"[IPv6] Setting gateway: {auto_gateway}")
+                # Xóa route cũ trước (ignore error nếu không có)
+                commands.append(f'netsh interface ipv6 delete route ::/0 "{self.interface_name}"')
+                # Thêm route mới
+                commands.append(f'netsh interface ipv6 add route ::/0 "{self.interface_name}" {auto_gateway}')
 
             # Bước 4: Set Windows prefer IPv6 over IPv4 (quan trọng!)
             # Đây là cách ép Windows dùng IPv6 cho outgoing connections

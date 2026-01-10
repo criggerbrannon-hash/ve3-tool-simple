@@ -16,20 +16,43 @@ if %errorLevel% neq 0 (
     exit /b 1
 )
 
-:: Add first IPv6 from the list
-echo Adding IPv6 address to Ethernet...
-netsh interface ipv6 add address "Ethernet" 2001:ee0:b004:1f00::2
+:: Variables - EDIT THESE TO MATCH YOUR SETUP
+set IPV6_ADDR=2001:ee0:b004:1f00::2
+set IPV6_GATEWAY=2001:ee0:b004:1f00::1
+set INTERFACE=Ethernet
+
+echo Using:
+echo   IP:      %IPV6_ADDR%
+echo   Gateway: %IPV6_GATEWAY%
+echo   Interface: %INTERFACE%
+echo.
+
+:: Delete old routes first (ignore errors)
+echo Cleaning old routes...
+netsh interface ipv6 delete route ::/0 "%INTERFACE%" >nul 2>&1
+
+:: Add IPv6 address
+echo Adding IPv6 address...
+netsh interface ipv6 add address "%INTERFACE%" %IPV6_ADDR%
+
+:: Add gateway route (SAME SUBNET as IP!)
+echo Adding gateway route...
+netsh interface ipv6 add route ::/0 "%INTERFACE%" %IPV6_GATEWAY%
 
 echo.
-echo Verifying...
-netsh interface ipv6 show addresses "Ethernet" | findstr "2001:"
+echo Verifying address...
+netsh interface ipv6 show addresses "%INTERFACE%" | findstr "2001:"
 
 echo.
-echo Testing connectivity...
-ping -n 1 2001:4860:4860::8888
+echo Verifying route...
+netsh interface ipv6 show route | findstr "::/0"
+
+echo.
+echo Testing connectivity to Google DNS (2001:4860:4860::8888)...
+ping -n 2 2001:4860:4860::8888
 
 echo.
 echo ============================================
-echo Done! If ping shows "Reply from", IPv6 works!
+echo If ping shows "Reply from", IPv6 is working!
 echo ============================================
 pause
