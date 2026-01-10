@@ -879,10 +879,10 @@ class DrissionFlowAPI:
         # Model fallback: khi quota exceeded (429), chuyển từ GEM_PIX_2 (Pro) sang GEM_PIX
         self._use_fallback_model = False  # True = dùng nano banana (GEM_PIX) thay vì pro (GEM_PIX_2)
 
-        # IPv6 rotation: đếm 403 liên tiếp, sau 3 lần thì đổi IPv6
+        # IPv6 rotation: đếm số lần reset Chrome do 403, sau 5 lần mới đổi IPv6
         self._consecutive_403 = 0
-        self._max_403_before_ipv6 = 3  # Số lần 403 liên tiếp trước khi đổi IPv6
-        self._ipv6_activated = False  # True = đã bật IPv6 proxy (chỉ bật sau khi 403 đủ lần)
+        self._max_403_before_ipv6 = 5  # Số lần reset Chrome liên tiếp trước khi đổi IPv6
+        self._ipv6_activated = False  # True = đã bật IPv6 proxy (chỉ bật sau khi reset Chrome đủ 5 lần)
 
     def log(self, msg: str, level: str = "INFO"):
         """Log message - chỉ dùng 1 trong 2: callback hoặc print."""
