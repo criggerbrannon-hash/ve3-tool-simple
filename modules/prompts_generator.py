@@ -5413,6 +5413,18 @@ OUTPUT FORMAT (JSON only):
 
             self.logger.info(f"[V2 BƯỚC 3] ✓ Tạo được {len(all_shots)} shots tổng cộng")
 
+            # === SẮP XẾP SHOTS THEO TIMESTAMP ===
+            # Đảm bảo thứ tự đúng trước khi lưu
+            def get_start_seconds(shot):
+                try:
+                    parts = shot["srt_start"].replace(",", ".").split(":")
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                except:
+                    return 0
+
+            all_shots.sort(key=get_start_seconds)
+            self.logger.info("[V2] ✓ Đã sắp xếp shots theo timestamp")
+
             # BƯỚC 4: Lưu vào Excel
             self.logger.info("\n[V2 BƯỚC 4] Lưu vào Excel...")
             from .excel_manager import PromptWorkbook, Scene
@@ -5420,7 +5432,12 @@ OUTPUT FORMAT (JSON only):
             workbook = PromptWorkbook(excel_path)
             workbook.load_or_create()
 
-            for shot in all_shots:
+            # === CLEAR SCENES CŨ TRƯỚC KHI THÊM MỚI ===
+            workbook.clear_scenes()
+            self.logger.info("[V2] ✓ Đã xóa scenes cũ")
+
+            # Đánh số scene_id mới theo thứ tự
+            for idx, shot in enumerate(all_shots):
                 # Chuyển reference_files thành JSON string
                 ref_files = shot.get("reference_files", [])
                 if isinstance(ref_files, list):
@@ -5429,7 +5446,7 @@ OUTPUT FORMAT (JSON only):
                     ref_files_str = str(ref_files)
 
                 scene_obj = Scene(
-                    scene_id=shot["scene_id"],
+                    scene_id=idx + 1,  # Đánh số lại theo thứ tự
                     srt_start=shot["srt_start"],
                     srt_end=shot["srt_end"],
                     duration=shot.get("duration", 5),
