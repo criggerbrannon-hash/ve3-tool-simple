@@ -186,6 +186,10 @@ class SmartEngine:
         self._video_results = {"success": 0, "failed": 0, "pending": 0, "failed_items": []}
         self._video_settings = {}
 
+        # Parallel video Chrome (Chrome 2 - chạy song song với Chrome 1)
+        self._parallel_video_running = False
+        self._parallel_video_thread = None
+
         # Log verbosity: set from settings.yaml (verbose_log: true/false)
         self.verbose_log = False
 
@@ -1839,6 +1843,29 @@ class SmartEngine:
             return {"success": 0, "failed": len(prompts)}
 
         # =====================================================================
+        # PARALLEL VIDEO: Mở Chrome 2 song song để tạo video
+        # Chrome 1 (worker_id=0): Bên trái - tạo ảnh
+        # Chrome 2 (worker_id=1): Bên phải - theo dõi Excel và tạo video
+        # =====================================================================
+        video_parallel_enabled = False
+        try:
+            video_cfg = settings.get('video_generation', {})
+            video_count = video_cfg.get('count', 0)
+            if video_count != 0:  # 0 = disabled, -1 = all, >0 = specific count
+                video_parallel_enabled = True
+                self.log(f"[PARALLEL-VIDEO] Video generation enabled (count={video_count})")
+                # Điều chỉnh để Chrome 1 chia màn hình bên trái
+                # Chrome 2 sẽ được mở trong thread riêng
+                if not headless:
+                    self.log("[PARALLEL-VIDEO] Chrome 1 sẽ ở bên trái, Chrome 2 ở bên phải")
+        except:
+            pass
+
+        # Start Chrome 2 song song (nếu video enabled)
+        if video_parallel_enabled and not self._parallel_video_running:
+            self._start_parallel_video_chrome(proj_dir, excel_files[0])
+
+        # =====================================================================
         # PARALLEL MODE: Nhieu browser song song
         # =====================================================================
         if parallel_browsers > 1:
@@ -1955,13 +1982,21 @@ class SmartEngine:
                     self._browser_generator = None
 
             if need_new_generator:
+                # Điều chỉnh worker layout khi video parallel enabled
+                # Chrome 1 = bên trái (worker_id=0, total_workers=2)
+                chrome1_worker_id = self.worker_id
+                chrome1_total_workers = self.total_workers
+                if video_parallel_enabled and not headless:
+                    chrome1_worker_id = 0  # Bên trái
+                    chrome1_total_workers = 2  # Chia đôi màn hình
+
                 generator = BrowserFlowGenerator(
                     project_path=str(proj_dir),
                     profile_name=profile_name,
                     headless=headless,
                     verbose=True,
-                    worker_id=self.worker_id,  # For parallel processing
-                    total_workers=self.total_workers  # For window layout
+                    worker_id=chrome1_worker_id,  # For parallel processing
+                    total_workers=chrome1_total_workers  # For window layout
                 )
                 self._browser_generator = generator
                 # Restore project_id tu generator cu
@@ -4477,6 +4512,233 @@ class SmartEngine:
                 pass
 
         self.log(f"[VIDEO] Worker stopped. Results: {self._video_results['success']} OK, {self._video_results['failed']} failed")
+
+    # =========================================================================
+    # PARALLEL VIDEO CHROME - Mở Chrome 2 song song với Chrome 1 (tạo ảnh)
+    # =========================================================================
+
+    def _start_parallel_video_chrome(self, proj_dir: Path, excel_path: Path):
+        """
+        Mở Chrome 2 NGAY TỪ ĐẦU để tạo video SONG SONG với Chrome 1 (tạo ảnh).
+
+        Chrome 1 (worker_id=0): Bên trái màn hình - tạo ảnh
+        Chrome 2 (worker_id=1): Bên phải màn hình - theo dõi Excel và tạo video
+
+        Flow:
+        1. Chrome 2 mở ngay từ đầu, chia màn hình bên phải
+        2. Poll Excel liên tục để tìm scene có media_id mới
+        3. Khi tìm thấy media_id → tạo video ngay (không đợi ảnh xong)
+        4. Khi Chrome 1 xong ảnh → coi như hoàn thành, không cần đợi video
+        """
+        if self._parallel_video_running:
+            return
+
+        self._parallel_video_running = True
+        self._parallel_video_thread = threading.Thread(
+            target=self._parallel_video_chrome_loop,
+            args=(proj_dir, excel_path),
+            daemon=True
+        )
+        self._parallel_video_thread.start()
+        self.log("[PARALLEL-VIDEO] Chrome 2 started - Theo dõi Excel và tạo video song song")
+
+    def _stop_parallel_video_chrome(self):
+        """Stop parallel video Chrome."""
+        self._parallel_video_running = False
+        if self._parallel_video_thread:
+            self._parallel_video_thread.join(timeout=5)
+            self._parallel_video_thread = None
+            self.log("[PARALLEL-VIDEO] Chrome 2 stopped")
+
+    def _parallel_video_chrome_loop(self, proj_dir: Path, excel_path: Path):
+        """
+        Loop chính của Chrome 2 - theo dõi Excel và tạo video.
+        """
+        from modules.drission_flow_api import DrissionFlowAPI
+        from modules.excel_manager import PromptWorkbook
+        import yaml
+
+        self.log("[PARALLEL-VIDEO] Chrome 2 loop started")
+
+        # Load settings
+        config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+        cfg = {}
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    cfg = yaml.safe_load(f) or {}
+            except:
+                pass
+
+        headless_mode = cfg.get('browser_headless', False)  # Không headless để thấy 2 Chrome
+        ws_cfg = cfg.get('webshare_proxy', {})
+        use_webshare = ws_cfg.get('enabled', True)
+        machine_id = ws_cfg.get('machine_id', 1)
+
+        # Video settings
+        video_cfg = cfg.get('video_generation', {})
+        video_count = video_cfg.get('count', 0)  # 0 = disabled, -1 = all
+        if video_count == 0:
+            self.log("[PARALLEL-VIDEO] Video generation disabled (count=0)", "INFO")
+            self._parallel_video_running = False
+            return
+
+        # Chrome profile - dùng profile khác với Chrome 1
+        root_dir = Path(__file__).parent.parent
+        profiles_dir = root_dir / cfg.get('browser_profiles_dir', './chrome_profiles')
+
+        profile_dir = None
+        if profiles_dir.exists():
+            # Tìm profile thứ 2 (khác profile đầu tiên)
+            available_profiles = sorted([p for p in profiles_dir.iterdir() if p.is_dir() and not p.name.startswith('.')])
+            if len(available_profiles) >= 2:
+                profile_dir = str(available_profiles[1])  # Profile thứ 2
+            elif available_profiles:
+                # Chỉ có 1 profile - tạo profile mới cho video
+                profile_dir = str(profiles_dir / "video_chrome")
+                Path(profile_dir).mkdir(exist_ok=True)
+
+        if not profile_dir:
+            self.log("[PARALLEL-VIDEO] Không có Chrome profile cho video!", "WARN")
+            self._parallel_video_running = False
+            return
+
+        self.log(f"[PARALLEL-VIDEO] Chrome profile: {profile_dir}")
+
+        # === KHỞI TẠO PROXY MANAGER ===
+        if use_webshare:
+            try:
+                from webshare_proxy import init_proxy_manager
+
+                proxy_mode = ws_cfg.get('proxy_mode', 'direct')
+                if proxy_mode == "rotating":
+                    rotating_user = ws_cfg.get('rotating_base_username') or ws_cfg.get('rotating_username', 'jhvbehdf-residential')
+                    rotating_pass = ws_cfg.get('rotating_password', 'cf1bi3yvq0t1')
+                    init_proxy_manager(
+                        username=rotating_user,
+                        password=rotating_pass,
+                        rotating_endpoint=True,
+                        rotating_host=ws_cfg.get('rotating_host', 'p.webshare.io'),
+                        rotating_port=ws_cfg.get('rotating_port', 80)
+                    )
+                else:
+                    proxy_file = ws_cfg.get('proxy_file', 'config/proxies.txt')
+                    init_proxy_manager(
+                        api_key=ws_cfg.get('api_key', ''),
+                        proxy_file=proxy_file
+                    )
+            except Exception as e:
+                self.log(f"[PARALLEL-VIDEO] Proxy init error: {e}", "WARN")
+                use_webshare = False
+
+        # === MỞ CHROME 2 (bên phải màn hình) ===
+        drission_api = None
+        try:
+            drission_api = DrissionFlowAPI(
+                profile_dir=profile_dir,
+                verbose=True,
+                log_callback=lambda msg, lvl="INFO": self.log(f"[PARALLEL-VIDEO] {msg}", lvl),
+                webshare_enabled=use_webshare,
+                worker_id=1,  # Chrome 2 = bên phải
+                total_workers=2,  # Chia đôi màn hình
+                headless=headless_mode,
+                machine_id=machine_id + 100,  # Khác machine_id với Chrome 1
+                chrome_portable=self.chrome_portable
+            )
+
+            if not drission_api.setup():
+                self.log("[PARALLEL-VIDEO] Không setup được Chrome 2!", "ERROR")
+                self._parallel_video_running = False
+                return
+
+            self.log("[PARALLEL-VIDEO] Chrome 2 ready - Bắt đầu theo dõi Excel...")
+
+        except Exception as e:
+            self.log(f"[PARALLEL-VIDEO] Failed to setup Chrome 2: {e}", "ERROR")
+            self._parallel_video_running = False
+            return
+
+        # === THEO DÕI EXCEL VÀ TẠO VIDEO ===
+        img_dir = proj_dir / "img"
+        processed_scenes = set()  # Track scenes đã xử lý
+        video_count_created = 0
+
+        while self._parallel_video_running and not self.stop_flag:
+            try:
+                # Load media_ids từ Excel
+                wb = PromptWorkbook(str(excel_path))
+                wb.load_or_create()
+                scene_media_ids = wb.get_scene_media_ids()
+
+                # Tìm scenes mới có media_id
+                for scene_id, media_id in scene_media_ids.items():
+                    if not media_id:
+                        continue
+                    if scene_id in processed_scenes:
+                        continue
+
+                    # Check nếu đã có video rồi
+                    mp4_path = img_dir / f"{scene_id}.mp4"
+                    if mp4_path.exists():
+                        processed_scenes.add(scene_id)
+                        continue
+
+                    # Check count limit
+                    if video_count != -1 and video_count_created >= video_count:
+                        self.log(f"[PARALLEL-VIDEO] Đã đủ {video_count} video, dừng!", "OK")
+                        self._parallel_video_running = False
+                        break
+
+                    # === TẠO VIDEO ===
+                    self.log(f"[PARALLEL-VIDEO] Tạo video: {scene_id} (media_id: {media_id[:30]}...)")
+
+                    # Lấy video_prompt từ Excel
+                    scenes = wb.get_scenes()
+                    video_prompt = "Subtle motion, cinematic, slow movement"
+                    for scene in scenes:
+                        if str(scene.id) == str(scene_id):
+                            video_prompt = scene.video_prompt or video_prompt
+                            break
+
+                    # Tạo video
+                    ok, result_path, error = drission_api.generate_video_force_mode(
+                        media_id=media_id,
+                        prompt=video_prompt,
+                        save_path=mp4_path
+                    )
+
+                    if ok:
+                        video_count_created += 1
+                        processed_scenes.add(scene_id)
+                        self.log(f"[PARALLEL-VIDEO] ✓ Video OK: {scene_id} ({video_count_created} videos)")
+
+                        # Xóa ảnh gốc nếu cần
+                        if video_cfg.get('replace_image', True):
+                            png_path = img_dir / f"{scene_id}.png"
+                            if png_path.exists():
+                                try:
+                                    png_path.unlink()
+                                except:
+                                    pass
+                    else:
+                        processed_scenes.add(scene_id)  # Đánh dấu đã xử lý (tránh retry liên tục)
+                        self.log(f"[PARALLEL-VIDEO] ✗ Video FAILED: {scene_id} - {error}", "WARN")
+
+            except Exception as e:
+                self.log(f"[PARALLEL-VIDEO] Error: {e}", "WARN")
+
+            # Poll interval
+            time.sleep(3)
+
+        # Cleanup
+        if drission_api:
+            try:
+                drission_api.close()
+                self.log("[PARALLEL-VIDEO] Chrome 2 closed")
+            except:
+                pass
+
+        self.log(f"[PARALLEL-VIDEO] Stopped. Created {video_count_created} videos")
 
     def _download_video(self, url: str, save_path: Path) -> bool:
         """Download video từ URL và lưu vào file."""
