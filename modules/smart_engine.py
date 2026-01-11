@@ -1648,6 +1648,7 @@ class SmartEngine:
         # Load settings
         import yaml
         headless = True
+        settings = {}
         try:
             config_path = self.config_dir / "settings.yaml"
             if config_path.exists():
@@ -1656,6 +1657,27 @@ class SmartEngine:
                 headless = settings.get('browser_headless', True)
         except:
             pass
+
+        # =====================================================================
+        # PARALLEL VIDEO: Mở Chrome 2 song song để tạo video
+        # Chrome 1 (worker_id=0): Bên trái - tạo ảnh
+        # Chrome 2 (worker_id=1): Bên phải - theo dõi Excel và tạo video
+        # =====================================================================
+        video_parallel_enabled = False
+        try:
+            video_cfg = settings.get('video_generation', {})
+            video_count = video_cfg.get('count', 0)
+            if video_count != 0:  # 0 = disabled, -1 = all, >0 = specific count
+                video_parallel_enabled = True
+                self.log(f"[PARALLEL-VIDEO] Video generation enabled (count={video_count})")
+                if not headless:
+                    self.log("[PARALLEL-VIDEO] Chrome 1 sẽ ở bên trái, Chrome 2 ở bên phải")
+        except:
+            pass
+
+        # Start Chrome 2 song song (nếu video enabled)
+        if video_parallel_enabled and not self._parallel_video_running:
+            self._start_parallel_video_chrome(proj_dir, excel_files[0])
 
         # Tim profile co san
         profile_name = "main"
@@ -1705,6 +1727,14 @@ class SmartEngine:
             self.log("va copy bearer token vao settings.yaml (flow_bearer_token)", "WARN")
 
         try:
+            # Điều chỉnh worker layout khi video parallel enabled
+            # Chrome 1 = bên trái (worker_id=0, total_workers=2)
+            chrome1_worker_id = self.worker_id
+            chrome1_total_workers = self.total_workers
+            if video_parallel_enabled and not headless:
+                chrome1_worker_id = 0  # Bên trái
+                chrome1_total_workers = 2  # Chia đôi màn hình
+
             # Tao BrowserFlowGenerator
             generator = BrowserFlowGenerator(
                 project_path=str(proj_dir),
@@ -1712,8 +1742,8 @@ class SmartEngine:
                 headless=headless,
                 verbose=True,
                 config_path=str(settings_path),
-                worker_id=self.worker_id,  # For parallel processing
-                total_workers=self.total_workers  # For window layout
+                worker_id=chrome1_worker_id,  # For parallel processing
+                total_workers=chrome1_total_workers  # For window layout
             )
 
             # === QUAN TRỌNG: Load project_id từ Excel khi chạy lại (RESUME MODE) ===
