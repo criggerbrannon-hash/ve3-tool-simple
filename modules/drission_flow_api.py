@@ -669,33 +669,64 @@ JS_SELECT_VIDEO_MODE = JS_SELECT_VIDEO_MODE_STEP1
 # Flow mới: Chrome gửi T2V request → Interceptor convert sang I2V
 # ============================================================================
 
-# T2V Mode - Bước 1: Click dropdown
+# T2V Mode - JS ALL-IN-ONE với setTimeout (đợi dropdown mở)
+# Vietnamese: "Từ văn bản sang video" = 22 ký tự
+# English: "Text to video" = 13 ký tự
+JS_SELECT_T2V_MODE_ALL = '''
+(function() {
+    window._t2vResult = 'PENDING';
+    var btn = document.querySelector('button[role="combobox"]');
+    if (!btn) {
+        console.log('[T2V] No dropdown found');
+        window._t2vResult = 'NO_DROPDOWN';
+        return;
+    }
+    btn.click();
+    console.log('[T2V] Clicked dropdown first time');
+
+    setTimeout(function() {
+        btn.click();
+        console.log('[T2V] Clicked dropdown second time');
+
+        setTimeout(function() {
+            var spans = document.querySelectorAll('span');
+            for (var el of spans) {
+                var text = (el.textContent || '').trim();
+                // Vietnamese: "Từ văn bản sang video" = 22 chars
+                // English: "Text to video" = 13 chars
+                if (text.includes('video') && (text.length === 22 || text.length === 13)) {
+                    console.log('[T2V] FOUND:', text);
+                    el.click();
+                    window._t2vResult = 'CLICKED';
+                    return;
+                }
+            }
+            console.log('[T2V] NOT FOUND');
+            window._t2vResult = 'NOT_FOUND';
+        }, 300);
+    }, 100);
+})();
+'''
+
+# Legacy: Các bước riêng lẻ (backup)
 JS_SELECT_T2V_MODE_STEP1 = '''
 (function() {
     var dropdown = document.querySelector('button[role="combobox"]');
-    if (!dropdown) {
-        return 'NO_DROPDOWN';
-    }
+    if (!dropdown) { return 'NO_DROPDOWN'; }
     dropdown.click();
     return 'CLICKED_FIRST';
 })();
 '''
 
-# T2V Mode - Bước 2: Click dropdown lần 2 để mở lại
 JS_SELECT_T2V_MODE_STEP2 = '''
 (function() {
     var dropdown = document.querySelector('button[role="combobox"]');
-    if (!dropdown) {
-        return 'NO_DROPDOWN';
-    }
+    if (!dropdown) { return 'NO_DROPDOWN'; }
     dropdown.click();
     return 'CLICKED_SECOND';
 })();
 '''
 
-# T2V Mode - Bước 3: Tìm và click option
-# Vietnamese: "Từ văn bản sang video" = 22 ký tự
-# English: "Text to video" = 13 ký tự
 JS_SELECT_T2V_MODE_STEP3 = '''
 (function() {
     var spans = document.querySelectorAll('span');
@@ -4076,26 +4107,27 @@ class DrissionFlowAPI:
             try:
                 self.log(f"[Mode] Chuyển sang T2V mode (attempt {attempt + 1}/{MAX_RETRIES})...")
 
-                # Bước 1: Click dropdown lần 1
-                self.driver.run_js(JS_SELECT_T2V_MODE_STEP1)
-                time.sleep(0.5)
+                # Dùng JS ALL-IN-ONE với setTimeout (đợi dropdown mở)
+                self.driver.run_js("window._t2vResult = 'PENDING';")
+                self.driver.run_js(JS_SELECT_T2V_MODE_ALL)
 
-                # Bước 2: Click dropdown lần 2 để mở menu
-                self.driver.run_js(JS_SELECT_T2V_MODE_STEP2)
-                time.sleep(0.5)
+                # Đợi JS async hoàn thành (setTimeout 100ms + 300ms = ~500ms)
+                time.sleep(0.8)
 
-                # Bước 3: Tìm và click option "Từ văn bản sang video"
-                option_clicked = self.driver.run_js(JS_SELECT_T2V_MODE_STEP3)
+                # Kiểm tra kết quả
+                result = self.driver.run_js("return window._t2vResult;")
 
-                if option_clicked == 'CLICKED':
+                if result == 'CLICKED':
                     self.log("[Mode] ✓ Đã chuyển sang T2V mode")
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                     return True
+                elif result == 'NO_DROPDOWN':
+                    self.log("[Mode] Không tìm thấy dropdown button", "WARN")
                 else:
-                    self.log(f"[Mode] Không tìm thấy T2V option: {option_clicked}", "WARN")
+                    self.log(f"[Mode] Không tìm thấy T2V option: {result}", "WARN")
                     # Click ra ngoài để đóng menu
                     self.driver.run_js('document.body.click();')
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                     continue
 
             except Exception as e:
