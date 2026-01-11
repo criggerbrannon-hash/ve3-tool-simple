@@ -667,6 +667,62 @@ JS_SELECT_VIDEO_MODE = JS_SELECT_VIDEO_MODE_STEP1
 # Flow mới: Chrome gửi T2V request → Interceptor convert sang I2V
 # ============================================================================
 
+# T2V Mode - VERSION MỚI: Async + await (giống IMAGE mode)
+JS_SELECT_T2V_MODE = '''
+(async function() {
+    // 1. Click dropdown
+    var dropdown = document.querySelector('button[role="combobox"]');
+    if (!dropdown) {
+        console.log('[T2V] Dropdown not found');
+        return 'NO_DROPDOWN';
+    }
+    dropdown.click();
+    console.log('[T2V] Clicked dropdown');
+
+    // 2. Đợi dropdown mở
+    await new Promise(r => setTimeout(r, 500));
+
+    // 3. Tìm và click "Từ văn bản sang video" / "Text to video"
+    var allElements = document.querySelectorAll('span, div, li');
+    for (var el of allElements) {
+        var text = (el.textContent || '').trim();
+        var textLower = text.toLowerCase();
+
+        // Vietnamese: "Từ văn bản sang video"
+        // English: "Text to video"
+        if (text === 'Từ văn bản sang video' ||
+            text === 'Text to video' ||
+            (textLower.includes('văn bản') && textLower.includes('video')) ||
+            (textLower.includes('text to video'))) {
+
+            var rect = el.getBoundingClientRect();
+            if (rect.height > 5 && rect.width > 30) {
+                el.click();
+                console.log('[T2V] Clicked: ' + text);
+                return 'CLICKED';
+            }
+        }
+    }
+
+    // Fallback: tìm trong listbox
+    var listbox = document.querySelector('[role="listbox"]');
+    if (listbox) {
+        var options = listbox.querySelectorAll('[role="option"]');
+        for (var opt of options) {
+            var text = (opt.textContent || '').toLowerCase();
+            if (text.includes('văn bản') || text.includes('text to video')) {
+                opt.click();
+                console.log('[T2V] Clicked option: ' + text);
+                return 'CLICKED';
+            }
+        }
+    }
+
+    return 'NOT_FOUND';
+})();
+'''
+
+# Legacy - giữ lại để backward compatibility
 # T2V Mode - Bước 1: Click dropdown
 JS_SELECT_T2V_MODE_STEP1 = '''
 (function() {
@@ -3266,13 +3322,8 @@ class DrissionFlowAPI:
         self.log(f"[T2V→I2V] Prompt: {prompt[:60]}...")
 
         # 1. Chuyển sang T2V mode ("Từ văn bản sang video")
-        # Giống hệt switch_to_video_mode() đang hoạt động
         self.log("[T2V→I2V] Chuyển sang mode 'Từ văn bản sang video'...")
-        self.driver.run_js(JS_SELECT_T2V_MODE_STEP1)  # Click dropdown lần 1
-        time.sleep(0.1)
-        self.driver.run_js(JS_SELECT_T2V_MODE_STEP2)  # Click dropdown lần 2
-        time.sleep(0.3)
-        result = self.driver.run_js(JS_SELECT_T2V_MODE_STEP3)  # Click option
+        result = self.driver.run_js(JS_SELECT_T2V_MODE)
         if result == 'CLICKED':
             self.log("[T2V→I2V] ✓ Đã chuyển sang T2V mode")
             time.sleep(0.5)
@@ -3399,23 +3450,16 @@ class DrissionFlowAPI:
         if not self._ready:
             return False
         try:
-            # Bước 1: Click dropdown lần 1
-            r1 = self.driver.run_js(JS_SELECT_T2V_MODE_STEP1)
-            if r1 == 'NO_DROPDOWN':
-                self.log("[Mode] Dropdown not found", "WARN")
-                return False
-            time.sleep(0.1)
+            # Dùng JS mới - async + await (giống IMAGE mode)
+            result = self.driver.run_js(JS_SELECT_T2V_MODE)
 
-            # Bước 2: Click dropdown lần 2
-            r2 = self.driver.run_js(JS_SELECT_T2V_MODE_STEP2)
-            time.sleep(0.3)
-
-            # Bước 3: Tìm và click option
-            result = self.driver.run_js(JS_SELECT_T2V_MODE_STEP3)
             if result == 'CLICKED':
                 self.log("[Mode] ✓ Đã chuyển sang T2V mode (Từ văn bản sang video)")
                 time.sleep(0.5)
                 return True
+            elif result == 'NO_DROPDOWN':
+                self.log("[Mode] Dropdown not found", "WARN")
+                return False
             else:
                 self.log(f"[Mode] Không tìm thấy T2V option: {result}", "WARN")
                 return False
@@ -3458,11 +3502,7 @@ class DrissionFlowAPI:
 
         # 1. Chuyển sang T2V mode ("Từ văn bản sang video")
         self.log("[T2V-PURE] Chuyển sang mode 'Từ văn bản sang video'...")
-        self.driver.run_js(JS_SELECT_T2V_MODE_STEP1)  # Click dropdown lần 1
-        time.sleep(0.1)
-        self.driver.run_js(JS_SELECT_T2V_MODE_STEP2)  # Click dropdown lần 2
-        time.sleep(0.3)
-        result = self.driver.run_js(JS_SELECT_T2V_MODE_STEP3)  # Click option
+        result = self.driver.run_js(JS_SELECT_T2V_MODE)
         if result == 'CLICKED':
             self.log("[T2V-PURE] ✓ Đã chuyển sang T2V mode")
             time.sleep(1)  # Đợi UI update
