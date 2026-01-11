@@ -1659,23 +1659,18 @@ class SmartEngine:
             pass
 
         # =====================================================================
-        # PARALLEL VIDEO: Mở Chrome 2 song song để tạo video
-        # Chrome 1 (worker_id=0): Bên trái - tạo ảnh
-        # Chrome 2 (worker_id=1): Bên phải - theo dõi Excel và tạo video
+        # PARALLEL VIDEO: Luôn mở Chrome 2 song song để tạo video
+        # Chrome 1 (bên trái): Tạo ảnh
+        # Chrome 2 (bên phải): Theo dõi Excel và tạo video
+        # Ảnh xong = project xong, video chạy nền được bao nhiêu thì được
         # =====================================================================
-        video_parallel_enabled = False
-        try:
-            video_cfg = settings.get('video_generation', {})
-            video_count = video_cfg.get('count', 0)
-            if video_count != 0:  # 0 = disabled, -1 = all, >0 = specific count
-                video_parallel_enabled = True
-                self.log(f"[PARALLEL-VIDEO] Video generation enabled (count={video_count})")
-                if not headless:
-                    self.log("[PARALLEL-VIDEO] Chrome 1 sẽ ở bên trái, Chrome 2 ở bên phải")
-        except:
-            pass
+        video_parallel_enabled = not headless  # Luôn bật khi không headless
 
-        # Start Chrome 2 song song (nếu video enabled)
+        if video_parallel_enabled:
+            self.log("[PARALLEL-VIDEO] Chrome 2 sẽ tạo video SONG SONG")
+            self.log("[PARALLEL-VIDEO] Ảnh xong = xong, video chạy nền")
+
+        # Start Chrome 2 song song
         if video_parallel_enabled and not self._parallel_video_running:
             self._start_parallel_video_chrome(proj_dir, excel_files[0])
 
@@ -1873,25 +1868,18 @@ class SmartEngine:
             return {"success": 0, "failed": len(prompts)}
 
         # =====================================================================
-        # PARALLEL VIDEO: Mở Chrome 2 song song để tạo video
-        # Chrome 1 (worker_id=0): Bên trái - tạo ảnh
-        # Chrome 2 (worker_id=1): Bên phải - theo dõi Excel và tạo video
+        # PARALLEL VIDEO: Luôn mở Chrome 2 song song để tạo video
+        # Chrome 1 (bên trái): Tạo ảnh
+        # Chrome 2 (bên phải): Theo dõi Excel và tạo video
+        # Ảnh xong = project xong, video chạy nền được bao nhiêu thì được
         # =====================================================================
-        video_parallel_enabled = False
-        try:
-            video_cfg = settings.get('video_generation', {})
-            video_count = video_cfg.get('count', 0)
-            if video_count != 0:  # 0 = disabled, -1 = all, >0 = specific count
-                video_parallel_enabled = True
-                self.log(f"[PARALLEL-VIDEO] Video generation enabled (count={video_count})")
-                # Điều chỉnh để Chrome 1 chia màn hình bên trái
-                # Chrome 2 sẽ được mở trong thread riêng
-                if not headless:
-                    self.log("[PARALLEL-VIDEO] Chrome 1 sẽ ở bên trái, Chrome 2 ở bên phải")
-        except:
-            pass
+        video_parallel_enabled = not headless  # Luôn bật khi không headless
 
-        # Start Chrome 2 song song (nếu video enabled)
+        if video_parallel_enabled:
+            self.log("[PARALLEL-VIDEO] Chrome 2 sẽ tạo video SONG SONG")
+            self.log("[PARALLEL-VIDEO] Ảnh xong = xong, video chạy nền")
+
+        # Start Chrome 2 song song
         if video_parallel_enabled and not self._parallel_video_running:
             self._start_parallel_video_chrome(proj_dir, excel_files[0])
 
@@ -4605,13 +4593,9 @@ class SmartEngine:
         use_webshare = ws_cfg.get('enabled', True)
         machine_id = ws_cfg.get('machine_id', 1)
 
-        # Video settings
+        # Video settings - luôn tạo video cho tất cả scenes
         video_cfg = cfg.get('video_generation', {})
-        video_count = video_cfg.get('count', 0)  # 0 = disabled, -1 = all
-        if video_count == 0:
-            self.log("[PARALLEL-VIDEO] Video generation disabled (count=0)", "INFO")
-            self._parallel_video_running = False
-            return
+        video_count = video_cfg.get('count', -1)  # -1 = all (default)
 
         # Chrome profile - dùng profile khác với Chrome 1
         root_dir = Path(__file__).parent.parent
