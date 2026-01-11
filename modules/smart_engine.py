@@ -4608,55 +4608,46 @@ class SmartEngine:
         video_cfg = cfg.get('video_generation', {})
         video_count = video_cfg.get('count', -1)  # -1 = all (default)
 
-        # Chrome profile - Chrome 2 cần profile RIÊNG (không dùng chung với Chrome 1)
+        # === TÌM CHROME PORTABLE THỨ 2 CHO VIDEO ===
+        # Chrome 2 cần Chrome Portable riêng biệt (VD: "GoogleChromePortable - Copy")
         root_dir = Path(__file__).parent.parent
-        profiles_dir = root_dir / cfg.get('browser_profiles_dir', './chrome_profiles')
+        chrome2_portable = None
 
-        # Tạo profile riêng cho Chrome 2 (video)
-        video_profile_dir = profiles_dir / "video_chrome"
-        video_profile_dir.mkdir(parents=True, exist_ok=True)
+        self.log(f"[PARALLEL-VIDEO] Tìm Chrome Portable cho video...")
 
-        # === COPY PROFILE TỪ CHROME PORTABLE (nếu cần) ===
-        # Để Chrome 2 có sẵn Google login từ Chrome Portable
-        chrome_portable_profile = None
+        # Tìm Chrome Portable copy cho video (ưu tiên thứ tự)
+        chrome2_search_paths = []
+
         if self.chrome_portable:
-            chrome_portable_path = Path(self.chrome_portable)
-            chrome_portable_profile = chrome_portable_path.parent / "Data" / "profile"
-        else:
-            # Auto-detect Chrome Portable profile
-            chrome_portable_locations = [
-                root_dir / "GoogleChromePortable" / "Data" / "profile",
-                Path.home() / "Documents" / "GoogleChromePortable" / "Data" / "profile",
-            ]
-            for loc in chrome_portable_locations:
-                if loc.exists():
-                    chrome_portable_profile = loc
-                    break
+            chrome1_path = Path(self.chrome_portable)
+            chrome1_dir = chrome1_path.parent
+            # Tìm trong cùng folder với Chrome 1
+            chrome2_search_paths.extend([
+                chrome1_dir.parent / "GoogleChromePortable - Copy" / "GoogleChromePortable.exe",
+                chrome1_dir.parent / "GoogleChromePortable_Video" / "GoogleChromePortable.exe",
+                chrome1_dir.parent / "ChromeVideo" / "GoogleChromePortable.exe",
+            ])
 
-        # Copy profile nếu video_chrome còn trống (chưa có login)
-        if chrome_portable_profile and chrome_portable_profile.exists():
-            # Check xem video_chrome đã có data chưa
-            has_login = (video_profile_dir / "Default").exists() or (video_profile_dir / "Cookies").exists()
-            if not has_login:
-                self.log(f"[PARALLEL-VIDEO] Copy profile từ Chrome Portable...")
-                try:
-                    import shutil
-                    # Copy toàn bộ profile (Login, Cookies, etc.)
-                    for item in chrome_portable_profile.iterdir():
-                        src = chrome_portable_profile / item.name
-                        dst = video_profile_dir / item.name
-                        if src.is_dir():
-                            if dst.exists():
-                                shutil.rmtree(dst)
-                            shutil.copytree(src, dst)
-                        else:
-                            shutil.copy2(src, dst)
-                    self.log(f"[PARALLEL-VIDEO] ✓ Đã copy profile!")
-                except Exception as e:
-                    self.log(f"[PARALLEL-VIDEO] Copy profile error: {e}", "WARN")
+        # Tìm trong thư mục tool
+        chrome2_search_paths.extend([
+            root_dir / "GoogleChromePortable - Copy" / "GoogleChromePortable.exe",
+            root_dir / "GoogleChromePortable_Video" / "GoogleChromePortable.exe",
+        ])
 
-        profile_dir = str(video_profile_dir)
-        self.log(f"[PARALLEL-VIDEO] Chrome 2 profile: {profile_dir}")
+        for path in chrome2_search_paths:
+            self.log(f"[PARALLEL-VIDEO]   Check: {path}")
+            if path.exists():
+                chrome2_portable = str(path)
+                self.log(f"[PARALLEL-VIDEO]   ✓ Found Chrome 2!")
+                break
+
+        if not chrome2_portable:
+            self.log(f"[PARALLEL-VIDEO] KHÔNG tìm thấy Chrome Portable cho video!", "ERROR")
+            self.log(f"[PARALLEL-VIDEO] Hãy copy GoogleChromePortable thành 'GoogleChromePortable - Copy'", "ERROR")
+            self._parallel_video_running = False
+            return
+
+        self.log(f"[PARALLEL-VIDEO] Chrome 2: {chrome2_portable}")
 
         # === KHỞI TẠO PROXY MANAGER ===
         if use_webshare:
@@ -4708,11 +4699,10 @@ class SmartEngine:
             return
 
         # === MỞ CHROME 2 (bên phải màn hình) ===
-        # Chrome 2 dùng Chrome Portable EXE nhưng với profile RIÊNG (đã copy ở trên)
+        # Chrome 2 dùng Chrome Portable riêng biệt (GoogleChromePortable - Copy)
         drission_api = None
         try:
             drission_api = DrissionFlowAPI(
-                profile_dir=profile_dir,
                 verbose=True,
                 log_callback=lambda msg, lvl="INFO": self.log(f"[PARALLEL-VIDEO] {msg}", lvl),
                 webshare_enabled=use_webshare,
@@ -4720,8 +4710,7 @@ class SmartEngine:
                 total_workers=2,  # Chia đôi màn hình
                 headless=headless_mode,
                 machine_id=machine_id + 100,  # Khác machine_id với Chrome 1
-                chrome_portable=self.chrome_portable,
-                skip_portable_detection=True  # Dùng profile_dir riêng thay vì built-in profile
+                chrome_portable=chrome2_portable  # Chrome Portable riêng cho video
             )
 
             # Mở đúng project URL từ Excel
