@@ -3410,7 +3410,7 @@ class DrissionFlowAPI:
             return False
 
     def switch_to_video_mode(self) -> bool:
-        """Chuyển Chrome sang mode tạo video từ ảnh. Dùng cách cũ: click dropdown 2 lần."""
+        """Chuyển Chrome sang mode tạo video từ ảnh. Dùng cách cũ: click dropdown 2 lần với delay."""
         if not self._ready:
             return False
 
@@ -3420,57 +3420,24 @@ class DrissionFlowAPI:
             try:
                 self.log(f"[Mode] Chuyển sang Video mode (attempt {attempt + 1}/{MAX_RETRIES})...")
 
-                # Click dropdown để mở menu
-                dropdown_result = self.driver.run_js('''
-                (function() {
-                    var dropdown = document.querySelector('button[role="combobox"]');
-                    if (!dropdown) return 'NO_DROPDOWN';
-                    dropdown.click();
-                    return 'CLICKED';
-                })();
-                ''')
-                self.log(f"[Mode] Dropdown: {dropdown_result}")
+                # Bước 1: Click dropdown lần 1
+                self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP1)
                 time.sleep(0.5)
 
-                # Tìm và click option
-                option_clicked = self.driver.run_js('''
-                (function() {
-                    try {
-                        var allSpans = document.querySelectorAll('span');
-                        var foundTexts = [];
-                        for (var i = 0; i < allSpans.length; i++) {
-                            var el = allSpans[i];
-                            var text = (el.textContent || '').trim().toLowerCase();
-                            // Vietnamese: "Tạo video từ các thành phần"
-                            // English: "Create video from assets"
-                            if (text.indexOf('video') >= 0 && (text.indexOf('thành phần') >= 0 || text.indexOf('assets') >= 0)) {
-                                el.click();
-                                return 'CLICKED:' + text;
-                            }
-                            if (text.length > 3 && text.length < 40) {
-                                foundTexts.push(text);
-                            }
-                        }
-                        var unique = [];
-                        for (var j = 0; j < foundTexts.length; j++) {
-                            if (unique.indexOf(foundTexts[j]) < 0 && unique.length < 10) {
-                                unique.push(foundTexts[j]);
-                            }
-                        }
-                        return 'NOT_FOUND:' + unique.join(' | ');
-                    } catch(e) {
-                        return 'ERROR:' + e.message;
-                    }
-                })();
-                ''')
+                # Bước 2: Click dropdown lần 2 để mở menu
+                self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP2)
+                time.sleep(0.5)
 
-                if option_clicked and option_clicked.startswith('CLICKED:'):
-                    self.log(f"[Mode] ✓ Đã chuyển sang Video mode: {option_clicked}")
+                # Bước 3: Tìm và click option "Tạo video từ các thành phần"
+                option_clicked = self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP3)
+
+                if option_clicked == 'CLICKED':
+                    self.log("[Mode] ✓ Đã chuyển sang Video mode")
                     time.sleep(0.5)
                     return True
                 else:
                     self.log(f"[Mode] Không tìm thấy Video option: {option_clicked}", "WARN")
-                    # Click lại dropdown để đóng menu
+                    # Click ra ngoài để đóng menu
                     self.driver.run_js('document.body.click();')
                     time.sleep(0.5)
                     continue
@@ -3805,7 +3772,7 @@ class DrissionFlowAPI:
     def switch_to_t2v_mode(self) -> bool:
         """
         Chuyển Chrome sang mode "Từ văn bản sang video" (Text-to-Video).
-        Dùng cách cũ đã hoạt động: click dropdown 2 lần, tìm span.
+        Dùng cách cũ đã hoạt động: click dropdown 2 lần với delay, rồi tìm span.
 
         Returns:
             True nếu thành công
@@ -3819,55 +3786,19 @@ class DrissionFlowAPI:
             try:
                 self.log(f"[Mode] Chuyển sang T2V mode (attempt {attempt + 1}/{MAX_RETRIES})...")
 
-                # Click dropdown để mở menu
-                dropdown_result = self.driver.run_js('''
-                (function() {
-                    var dropdown = document.querySelector('button[role="combobox"]');
-                    if (!dropdown) return 'NO_DROPDOWN';
-                    dropdown.click();
-                    return 'CLICKED';
-                })();
-                ''')
-                self.log(f"[Mode] Dropdown: {dropdown_result}")
+                # Bước 1: Click dropdown lần 1
+                self.driver.run_js(JS_SELECT_T2V_MODE_STEP1)
                 time.sleep(0.5)
 
-                # Tìm và click option
-                option_clicked = self.driver.run_js('''
-                (function() {
-                    try {
-                        var allSpans = document.querySelectorAll('span');
-                        var foundTexts = [];
-                        for (var i = 0; i < allSpans.length; i++) {
-                            var el = allSpans[i];
-                            var text = (el.textContent || '').trim().toLowerCase();
-                            // Vietnamese: "Từ văn bản sang video"
-                            // English: "Text to video"
-                            if ((text.indexOf('văn bản') >= 0 && text.indexOf('video') >= 0) ||
-                                (text.indexOf('text') >= 0 && text.indexOf('video') >= 0 && text.indexOf('assets') < 0)) {
-                                el.click();
-                                return 'CLICKED:' + text;
-                            }
-                            // Collect for debug
-                            if (text.length > 3 && text.length < 40) {
-                                foundTexts.push(text);
-                            }
-                        }
-                        // Dedupe and return
-                        var unique = [];
-                        for (var j = 0; j < foundTexts.length; j++) {
-                            if (unique.indexOf(foundTexts[j]) < 0 && unique.length < 10) {
-                                unique.push(foundTexts[j]);
-                            }
-                        }
-                        return 'NOT_FOUND:' + unique.join(' | ');
-                    } catch(e) {
-                        return 'ERROR:' + e.message;
-                    }
-                })();
-                ''')
+                # Bước 2: Click dropdown lần 2 để mở menu
+                self.driver.run_js(JS_SELECT_T2V_MODE_STEP2)
+                time.sleep(0.5)
 
-                if option_clicked and option_clicked.startswith('CLICKED:'):
-                    self.log(f"[Mode] ✓ Đã chuyển sang T2V mode: {option_clicked}")
+                # Bước 3: Tìm và click option "Từ văn bản sang video"
+                option_clicked = self.driver.run_js(JS_SELECT_T2V_MODE_STEP3)
+
+                if option_clicked == 'CLICKED':
+                    self.log("[Mode] ✓ Đã chuyển sang T2V mode")
                     time.sleep(0.5)
                     return True
                 else:
