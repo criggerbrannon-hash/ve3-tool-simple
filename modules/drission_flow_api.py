@@ -3197,10 +3197,12 @@ class DrissionFlowAPI:
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_0_r2v_fast_ultra",
         max_wait: int = 300,
-        save_path: Optional[Path] = None
+        save_path: Optional[Path] = None,
+        max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Tạo video từ ảnh (I2V) sử dụng FORCE MODE.
+        Có retry và xử lý 403 + IPv6 như generate_image.
 
         Flow (FORCE MODE - không cần chuyển mode):
         1. Ở nguyên mode "Tạo hình ảnh"
@@ -3217,6 +3219,7 @@ class DrissionFlowAPI:
             video_model: Model video (fast/quality)
             max_wait: Thời gian chờ tối đa (giây)
             save_path: Đường dẫn lưu video (optional)
+            max_retries: Số lần retry khi gặp 403
 
         Returns:
             Tuple[success, video_url, error]
@@ -3227,11 +3230,106 @@ class DrissionFlowAPI:
         if not media_id:
             return False, None, "Media ID không được để trống"
 
+        last_error = None
+
+        for attempt in range(max_retries):
+            # Thực hiện tạo video
+            success, result, error = self._execute_video_chrome(
+                media_id=media_id,
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                video_model=video_model,
+                max_wait=max_wait,
+                save_path=save_path
+            )
+
+            if success:
+                # Reset 403 counter khi thành công
+                if self._consecutive_403 > 0:
+                    self.log(f"[I2V-Chrome] Reset 403 counter (was {self._consecutive_403})")
+                    self._consecutive_403 = 0
+                return True, result, None
+
+            if error:
+                last_error = error
+
+                # === 403 ERROR: RESET CHROME + IPv6 ===
+                if "403" in str(error):
+                    self._consecutive_403 += 1
+                    self.log(f"[I2V-Chrome] ⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
+
+                    # Kill Chrome
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    # Đổi proxy nếu có
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V-Chrome 403")
+                        self.log(f"[I2V-Chrome] → Webshare rotate: {msg}", "WARN")
+
+                    # === IPv6: Sau N lần 403 liên tiếp, ACTIVATE hoặc ROTATE IPv6 ===
+                    rotate_ipv6 = False
+                    if self._consecutive_403 >= self._max_403_before_ipv6:
+                        self._consecutive_403 = 0  # Reset counter
+
+                        if not self._ipv6_activated:
+                            self.log(f"[I2V-Chrome] → 🌐 ACTIVATE IPv6 MODE (lần đầu)...")
+                            self._activate_ipv6()
+                        else:
+                            self.log(f"[I2V-Chrome] → 🔄 Rotate sang IPv6 khác...")
+                            rotate_ipv6 = True
+
+                    # Restart Chrome
+                    if self.restart_chrome(rotate_ipv6=rotate_ipv6):
+                        self.log("[I2V-Chrome] → Chrome restarted, tiếp tục...")
+                        continue
+                    else:
+                        return False, None, "Không restart được Chrome sau 403"
+
+                # === TIMEOUT ERROR ===
+                if "timeout" in str(error).lower():
+                    self.log(f"[I2V-Chrome] ⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V-Chrome Timeout")
+                        self.log(f"[I2V-Chrome] → Webshare rotate: {msg}", "WARN")
+
+                    if attempt < max_retries - 1:
+                        if self.restart_chrome():
+                            continue
+
+                # === 500 ERROR ===
+                if "500" in str(error):
+                    self.log(f"[I2V-Chrome] ⚠️ 500 Internal Error (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+                        continue
+
+                return False, None, error
+
+        return False, None, last_error or "Max retries exceeded"
+
+    def _execute_video_chrome(
+        self,
+        media_id: str,
+        prompt: str,
+        aspect_ratio: str,
+        video_model: str,
+        max_wait: int,
+        save_path: Optional[Path]
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Thực hiện tạo video Chrome một lần (không retry).
+        Được gọi bởi generate_video_chrome với retry logic.
+        """
         self.log(f"[I2V-Chrome] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[I2V-Chrome] Prompt: {prompt[:60]}...")
 
         # FORCE MODE: Không chuyển mode, ở nguyên "Tạo hình ảnh"
-        # Interceptor sẽ convert image request → video request
         self.log("[I2V-Chrome] FORCE MODE: Ở nguyên 'Tạo hình ảnh', Interceptor convert → video")
 
         # 1. Reset video state
@@ -3250,7 +3348,7 @@ class DrissionFlowAPI:
         video_payload = {
             "clientContext": {
                 "projectId": self.project_id or "",
-                "recaptchaToken": "",  # Sẽ được inject bởi interceptor
+                "recaptchaToken": "",
                 "sessionId": session_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": "PAYGATE_TIER_TWO"
@@ -3268,28 +3366,24 @@ class DrissionFlowAPI:
             }]
         }
 
-        # Set FORCE VIDEO PAYLOAD - Interceptor sẽ convert image request → video request
         self.driver.run_js(f"window._forceVideoPayload = {json.dumps(video_payload)};")
         self.log(f"[I2V-Chrome] ✓ FORCE payload ready (mediaId: {media_id[:40]}...)")
 
-        # 3. Tìm textarea và nhập prompt (Ctrl+V để tránh bot detection)
+        # 3. Tìm textarea và nhập prompt
         textarea = self._find_textarea()
         if not textarea:
             return False, None, "Không tìm thấy textarea"
 
-        # Paste bằng Ctrl+V (như thủ công)
         self._paste_prompt_ctrlv(textarea, prompt)
-
-        # Đợi reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        # 4. Nhấn Enter → Chrome gửi IMAGE request → Interceptor convert → VIDEO request
+        # 4. Nhấn Enter
         textarea.input('\n')
         self.log("[I2V-Chrome] → Enter → Interceptor converting IMAGE → VIDEO request...")
 
         # 5. Đợi video response từ browser
         start_time = time.time()
-        timeout = 60  # 60s cho initial request
+        timeout = 60
 
         while time.time() - start_time < timeout:
             result = self.driver.run_js("""
@@ -3308,7 +3402,6 @@ class DrissionFlowAPI:
             if result.get('response'):
                 response_data = result['response']
 
-                # Check for API errors
                 if isinstance(response_data, dict):
                     if response_data.get('error'):
                         error_info = response_data['error']
@@ -3316,7 +3409,6 @@ class DrissionFlowAPI:
                         self.log(f"[I2V-Chrome] ✗ API Error: {error_msg}", "ERROR")
                         return False, None, error_msg
 
-                    # Check nếu có video ngay trong response
                     if "media" in response_data or "generatedVideos" in response_data:
                         videos = response_data.get("generatedVideos", response_data.get("media", []))
                         if videos:
@@ -3325,13 +3417,11 @@ class DrissionFlowAPI:
                                 self.log(f"[I2V-Chrome] ✓ Video ready (no poll): {video_url[:60]}...")
                                 return self._download_video_if_needed(video_url, save_path)
 
-                    # Có operations - cần poll
                     operations = response_data.get("operations", [])
                     if operations:
                         self.log(f"[I2V-Chrome] Got {len(operations)} operations, polling...")
                         op = operations[0]
 
-                        # Build headers cho polling
                         headers = {
                             "Authorization": self.bearer_token,
                             "Content-Type": "application/json",
@@ -3346,7 +3436,6 @@ class DrissionFlowAPI:
                             bridge_url = f"http://127.0.0.1:{self._bridge_port}"
                             proxies = {"http": bridge_url, "https": bridge_url}
 
-                        # Poll cho video hoàn thành
                         video_url = self._poll_video_operation(op, headers, proxies, max_wait)
 
                         if video_url:
@@ -3455,10 +3544,12 @@ class DrissionFlowAPI:
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_0_r2v_fast_ultra",
         max_wait: int = 300,
-        timeout: int = 60
+        timeout: int = 60,
+        max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Tạo video bằng FORCE MODE - KHÔNG CẦN CLICK CHUYỂN MODE!
+        Có retry và xử lý 403 + IPv6 như generate_image.
 
         Flow thông minh:
         1. Vẫn ở mode "Tạo hình ảnh" (không click chuyển mode)
@@ -3471,6 +3562,7 @@ class DrissionFlowAPI:
         - Không cần click chuyển mode UI (hay lỗi)
         - Sử dụng lại flow tạo ảnh đã hoạt động
         - Fresh reCAPTCHA trong 0.05s
+        - Tự động xử lý 403 với IPv6 rotation
 
         Args:
             media_id: Media ID của ảnh (từ generate_image)
@@ -3480,6 +3572,7 @@ class DrissionFlowAPI:
             video_model: Model video
             max_wait: Thời gian poll tối đa (giây)
             timeout: Timeout đợi response đầu tiên
+            max_retries: Số lần retry khi gặp 403
 
         Returns:
             Tuple[success, video_path_or_url, error]
@@ -3490,6 +3583,112 @@ class DrissionFlowAPI:
         if not media_id:
             return False, None, "Media ID không được để trống"
 
+        last_error = None
+
+        for attempt in range(max_retries):
+            # Thực hiện tạo video
+            success, result, error = self._execute_video_force_mode(
+                media_id=media_id,
+                prompt=prompt,
+                save_path=save_path,
+                aspect_ratio=aspect_ratio,
+                video_model=video_model,
+                max_wait=max_wait,
+                timeout=timeout
+            )
+
+            if success:
+                # Reset 403 counter khi thành công
+                if self._consecutive_403 > 0:
+                    self.log(f"[I2V-FORCE] Reset 403 counter (was {self._consecutive_403})")
+                    self._consecutive_403 = 0
+                return True, result, None
+
+            if error:
+                last_error = error
+
+                # === 403 ERROR: RESET CHROME + IPv6 ===
+                if "403" in str(error):
+                    self._consecutive_403 += 1
+                    self.log(f"[I2V-FORCE] ⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
+
+                    # Kill Chrome
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    # Đổi proxy nếu có
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V-FORCE 403")
+                        self.log(f"[I2V-FORCE] → Webshare rotate: {msg}", "WARN")
+
+                    # === IPv6: Sau N lần 403 liên tiếp, ACTIVATE hoặc ROTATE IPv6 ===
+                    rotate_ipv6 = False
+                    if self._consecutive_403 >= self._max_403_before_ipv6:
+                        self._consecutive_403 = 0  # Reset counter
+
+                        if not self._ipv6_activated:
+                            # Lần đầu: Activate IPv6
+                            self.log(f"[I2V-FORCE] → 🌐 ACTIVATE IPv6 MODE (lần đầu)...")
+                            self._activate_ipv6()
+                        else:
+                            # Đã activate: Rotate sang IP khác
+                            self.log(f"[I2V-FORCE] → 🔄 Rotate sang IPv6 khác...")
+                            rotate_ipv6 = True
+
+                    # Restart Chrome (có thể kèm IPv6 rotation)
+                    if self.restart_chrome(rotate_ipv6=rotate_ipv6):
+                        self.log("[I2V-FORCE] → Chrome restarted, tiếp tục...")
+                        continue  # Thử lại sau khi reset
+                    else:
+                        return False, None, "Không restart được Chrome sau 403"
+
+                # === TIMEOUT ERROR: Reset Chrome ===
+                if "timeout" in str(error).lower():
+                    self.log(f"[I2V-FORCE] ⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
+
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    # Đổi proxy nếu có
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V-FORCE Timeout")
+                        self.log(f"[I2V-FORCE] → Webshare rotate: {msg}", "WARN")
+
+                    if attempt < max_retries - 1:
+                        if self.restart_chrome():
+                            continue
+                        else:
+                            return False, None, "Không restart được Chrome sau timeout"
+
+                # === 500 ERROR: Retry với delay ===
+                if "500" in str(error):
+                    self.log(f"[I2V-FORCE] ⚠️ 500 Internal Error (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        self.log(f"[I2V-FORCE] → Đợi 3s rồi retry...")
+                        time.sleep(3)
+                        continue
+
+                # Lỗi khác, không retry
+                return False, None, error
+
+        return False, None, last_error or "Max retries exceeded"
+
+    def _execute_video_force_mode(
+        self,
+        media_id: str,
+        prompt: str,
+        save_path: Optional[Path] = None,
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        video_model: str = "veo_3_0_r2v_fast_ultra",
+        max_wait: int = 300,
+        timeout: int = 60
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Thực hiện tạo video FORCE MODE một lần (không retry).
+        Được gọi bởi generate_video_force_mode với retry logic.
+        """
         self.log(f"[I2V-FORCE] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[I2V-FORCE] Prompt: {prompt[:60]}...")
 
@@ -3612,10 +3811,12 @@ class DrissionFlowAPI:
         save_path: Optional[Path] = None,
         video_model: str = "veo_3_0_r2v_fast",
         max_wait: int = 300,
-        timeout: int = 60
+        timeout: int = 60,
+        max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Tạo video bằng T2V MODE - Dùng Chrome's Text-to-Video mode, Interceptor convert sang I2V.
+        Có retry và xử lý 403 + IPv6 như generate_image.
 
         Flow thông minh (ý tưởng của user):
         1. Click chuyển sang "Từ văn bản sang video" (T2V mode)
@@ -3627,11 +3828,6 @@ class DrissionFlowAPI:
            - Đổi model: veo_3_1_t2v_fast → veo_3_0_r2v_fast
         5. Chrome gửi I2V request với fresh reCAPTCHA!
 
-        Ưu điểm:
-        - Fresh reCAPTCHA được tạo cho VIDEO request (không phải IMAGE)
-        - Chrome handle toàn bộ T2V settings/payload
-        - Interceptor chỉ thêm referenceImages và đổi endpoint
-
         Args:
             media_id: Media ID của ảnh (từ generate_image)
             prompt: Video prompt (mô tả chuyển động)
@@ -3639,6 +3835,7 @@ class DrissionFlowAPI:
             video_model: Model video I2V (default: veo_3_0_r2v_fast)
             max_wait: Thời gian poll tối đa (giây)
             timeout: Timeout đợi response đầu tiên
+            max_retries: Số lần retry khi gặp 403
 
         Returns:
             Tuple[success, video_path_or_url, error]
@@ -3649,10 +3846,96 @@ class DrissionFlowAPI:
         if not media_id:
             return False, None, "Media ID không được để trống"
 
+        last_error = None
+
+        for attempt in range(max_retries):
+            success, result, error = self._execute_video_t2v_mode(
+                media_id=media_id,
+                prompt=prompt,
+                save_path=save_path,
+                video_model=video_model,
+                max_wait=max_wait,
+                timeout=timeout
+            )
+
+            if success:
+                if self._consecutive_403 > 0:
+                    self.log(f"[T2V→I2V] Reset 403 counter (was {self._consecutive_403})")
+                    self._consecutive_403 = 0
+                return True, result, None
+
+            if error:
+                last_error = error
+
+                # === 403 ERROR: RESET CHROME + IPv6 ===
+                if "403" in str(error):
+                    self._consecutive_403 += 1
+                    self.log(f"[T2V→I2V] ⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
+
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "T2V 403")
+                        self.log(f"[T2V→I2V] → Webshare rotate: {msg}", "WARN")
+
+                    rotate_ipv6 = False
+                    if self._consecutive_403 >= self._max_403_before_ipv6:
+                        self._consecutive_403 = 0
+                        if not self._ipv6_activated:
+                            self.log(f"[T2V→I2V] → 🌐 ACTIVATE IPv6 MODE (lần đầu)...")
+                            self._activate_ipv6()
+                        else:
+                            self.log(f"[T2V→I2V] → 🔄 Rotate sang IPv6 khác...")
+                            rotate_ipv6 = True
+
+                    if self.restart_chrome(rotate_ipv6=rotate_ipv6):
+                        self.log("[T2V→I2V] → Chrome restarted, tiếp tục...")
+                        continue
+                    else:
+                        return False, None, "Không restart được Chrome sau 403"
+
+                # === TIMEOUT ERROR ===
+                if "timeout" in str(error).lower():
+                    self.log(f"[T2V→I2V] ⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "T2V Timeout")
+                        self.log(f"[T2V→I2V] → Webshare rotate: {msg}", "WARN")
+
+                    if attempt < max_retries - 1:
+                        if self.restart_chrome():
+                            continue
+
+                # === 500 ERROR ===
+                if "500" in str(error):
+                    self.log(f"[T2V→I2V] ⚠️ 500 Internal Error (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+                        continue
+
+                return False, None, error
+
+        return False, None, last_error or "Max retries exceeded"
+
+    def _execute_video_t2v_mode(
+        self,
+        media_id: str,
+        prompt: str,
+        save_path: Optional[Path],
+        video_model: str,
+        max_wait: int,
+        timeout: int
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Thực hiện tạo video T2V mode một lần (không retry)."""
         self.log(f"[T2V→I2V] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[T2V→I2V] Prompt: {prompt[:60]}...")
 
-        # 1. Chuyển sang T2V mode ("Từ văn bản sang video") - dùng function có retry
+        # 1. Chuyển sang T2V mode
         self.log("[T2V→I2V] Chuyển sang mode 'Từ văn bản sang video'...")
         if not self.switch_to_t2v_mode():
             self.log("[T2V→I2V] ⚠️ Không chuyển được T2V mode, thử tiếp...", "WARN")
@@ -3665,10 +3948,10 @@ class DrissionFlowAPI:
             window._t2vToI2vConfig = null;
         """)
 
-        # 3. Set T2V→I2V config - Interceptor sẽ convert T2V request thành I2V
+        # 3. Set T2V→I2V config
         t2v_config = {
             "mediaId": media_id,
-            "videoModelKey": video_model  # Model I2V để thay thế
+            "videoModelKey": video_model
         }
         self.driver.run_js(f"window._t2vToI2vConfig = {json.dumps(t2v_config)};")
         self.log(f"[T2V→I2V] ✓ Config ready (mediaId: {media_id[:40]}...)")
@@ -3685,20 +3968,16 @@ class DrissionFlowAPI:
         except:
             pass
 
-        # Type prompt with Ctrl+V
         self._paste_prompt_ctrlv(textarea, prompt[:500])
-
-        # Đợi reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        # 5. Nhấn Enter để gửi (trigger Chrome gửi T2V request - Interceptor convert thành I2V)
+        # 5. Nhấn Enter
         self.log("[T2V→I2V] → Pressed Enter, Chrome gửi T2V → Interceptor convert → I2V...")
         textarea.input('\n')
 
-        # 6. Đợi VIDEO response (từ Interceptor sau khi convert T2V → I2V)
+        # 6. Đợi VIDEO response
         start_time = time.time()
         while time.time() - start_time < timeout:
-            # Check video response
             response = self.driver.run_js("return window._videoResponse;")
             error = self.driver.run_js("return window._videoError;")
 
@@ -3709,7 +3988,6 @@ class DrissionFlowAPI:
             if response:
                 self.log(f"[T2V→I2V] Got response!")
 
-                # Check error response
                 if isinstance(response, dict):
                     if response.get('error') and response.get('error').get('code'):
                         error_code = response['error']['code']
@@ -3717,18 +3995,15 @@ class DrissionFlowAPI:
                         self.log(f"[T2V→I2V] ✗ API Error {error_code}: {error_msg}", "ERROR")
                         return False, None, f"Error {error_code}: {error_msg}"
 
-                    # Check for operations (async video generation)
                     if response.get('operations'):
                         operation = response['operations'][0]
                         self.log(f"[T2V→I2V] ✓ Video operation started")
 
-                        # Refresh token từ browser (Chrome vừa gửi video request với token fresh)
                         fresh_token = self.driver.run_js("return window._tk;")
                         if fresh_token:
                             self.bearer_token = f"Bearer {fresh_token}"
                             self.log(f"[T2V→I2V] ✓ Refreshed bearer token")
 
-                        # Build headers cho polling
                         headers = {
                             "Authorization": self.bearer_token,
                             "Content-Type": "application/json",
@@ -3743,7 +4018,6 @@ class DrissionFlowAPI:
                             bridge_url = f"http://127.0.0.1:{self._bridge_port}"
                             proxies = {"http": bridge_url, "https": bridge_url}
 
-                        # Poll cho video hoàn thành
                         video_url = self._poll_video_operation(operation, headers, proxies, max_wait)
 
                         if video_url:
@@ -3752,7 +4026,6 @@ class DrissionFlowAPI:
                         else:
                             return False, None, "Timeout hoặc lỗi khi poll video"
 
-                    # Check for direct video URL
                     if response.get('videos'):
                         video = response['videos'][0]
                         video_url = video.get('videoUri') or video.get('uri')
@@ -3818,10 +4091,12 @@ class DrissionFlowAPI:
         prompt: str,
         save_path: Optional[Path] = None,
         max_wait: int = 300,
-        timeout: int = 60
+        timeout: int = 60,
+        max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Tạo video bằng PURE TEXT-TO-VIDEO mode - KHÔNG cần ảnh.
+        Có retry và xử lý 403 + IPv6 như generate_image.
 
         Flow (giống như tạo ảnh, nhưng ở mode T2V):
         1. Chuyển sang mode "Từ văn bản sang video" (T2V)
@@ -3836,6 +4111,7 @@ class DrissionFlowAPI:
             save_path: Đường dẫn lưu video
             max_wait: Thời gian poll tối đa (giây)
             timeout: Timeout đợi response đầu tiên
+            max_retries: Số lần retry khi gặp 403
 
         Returns:
             Tuple[success, video_path_or_url, error]
@@ -3843,15 +4119,97 @@ class DrissionFlowAPI:
         if not self._ready:
             return False, None, "API chưa setup! Gọi setup() trước."
 
+        last_error = None
+
+        for attempt in range(max_retries):
+            success, result, error = self._execute_video_pure_t2v(
+                prompt=prompt,
+                save_path=save_path,
+                max_wait=max_wait,
+                timeout=timeout
+            )
+
+            if success:
+                if self._consecutive_403 > 0:
+                    self.log(f"[T2V-PURE] Reset 403 counter (was {self._consecutive_403})")
+                    self._consecutive_403 = 0
+                return True, result, None
+
+            if error:
+                last_error = error
+
+                # === 403 ERROR: RESET CHROME + IPv6 ===
+                if "403" in str(error):
+                    self._consecutive_403 += 1
+                    self.log(f"[T2V-PURE] ⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
+
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "T2V-PURE 403")
+                        self.log(f"[T2V-PURE] → Webshare rotate: {msg}", "WARN")
+
+                    rotate_ipv6 = False
+                    if self._consecutive_403 >= self._max_403_before_ipv6:
+                        self._consecutive_403 = 0
+                        if not self._ipv6_activated:
+                            self.log(f"[T2V-PURE] → 🌐 ACTIVATE IPv6 MODE (lần đầu)...")
+                            self._activate_ipv6()
+                        else:
+                            self.log(f"[T2V-PURE] → 🔄 Rotate sang IPv6 khác...")
+                            rotate_ipv6 = True
+
+                    if self.restart_chrome(rotate_ipv6=rotate_ipv6):
+                        self.log("[T2V-PURE] → Chrome restarted, tiếp tục...")
+                        continue
+                    else:
+                        return False, None, "Không restart được Chrome sau 403"
+
+                # === TIMEOUT ERROR ===
+                if "timeout" in str(error).lower():
+                    self.log(f"[T2V-PURE] ⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "T2V-PURE Timeout")
+                        self.log(f"[T2V-PURE] → Webshare rotate: {msg}", "WARN")
+
+                    if attempt < max_retries - 1:
+                        if self.restart_chrome():
+                            continue
+
+                # === 500 ERROR ===
+                if "500" in str(error):
+                    self.log(f"[T2V-PURE] ⚠️ 500 Internal Error (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+                        continue
+
+                return False, None, error
+
+        return False, None, last_error or "Max retries exceeded"
+
+    def _execute_video_pure_t2v(
+        self,
+        prompt: str,
+        save_path: Optional[Path],
+        max_wait: int,
+        timeout: int
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Thực hiện tạo video T2V thuần một lần (không retry)."""
         self.log(f"[T2V-PURE] Tạo video từ text prompt...")
         self.log(f"[T2V-PURE] Prompt: {prompt[:80]}...")
 
-        # 1. Chuyển sang T2V mode ("Từ văn bản sang video") - dùng function có retry
+        # 1. Chuyển sang T2V mode
         self.log("[T2V-PURE] Chuyển sang mode 'Từ văn bản sang video'...")
         if not self.switch_to_t2v_mode():
             self.log("[T2V-PURE] ⚠️ Không chuyển được T2V mode, thử tiếp...", "WARN")
 
-        # 2. Reset video state - KHÔNG set _t2vToI2vConfig để giữ T2V thuần
+        # 2. Reset video state
         self.driver.run_js("""
             window._videoResponse = null;
             window._videoError = null;
@@ -3874,20 +4232,16 @@ class DrissionFlowAPI:
         except:
             pass
 
-        # Type prompt with Ctrl+V
         self._paste_prompt_ctrlv(textarea, prompt[:500])
-
-        # Đợi reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        # 4. Nhấn Enter để gửi (trigger Chrome gửi T2V request thuần)
+        # 4. Nhấn Enter
         self.log("[T2V-PURE] → Pressed Enter, Chrome gửi batchAsyncGenerateVideoText...")
         textarea.input('\n')
 
-        # 5. Đợi VIDEO response (T2V thuần)
+        # 5. Đợi VIDEO response
         start_time = time.time()
         while time.time() - start_time < timeout:
-            # Check video response
             response = self.driver.run_js("return window._videoResponse;")
             error = self.driver.run_js("return window._videoError;")
 
@@ -3898,7 +4252,6 @@ class DrissionFlowAPI:
             if response:
                 self.log(f"[T2V-PURE] Got response!")
 
-                # Check error response
                 if isinstance(response, dict):
                     if response.get('error') and response.get('error').get('code'):
                         error_code = response['error']['code']
@@ -3906,12 +4259,10 @@ class DrissionFlowAPI:
                         self.log(f"[T2V-PURE] ✗ API Error {error_code}: {error_msg}", "ERROR")
                         return False, None, f"Error {error_code}: {error_msg}"
 
-                    # Check for operations (async video generation)
                     if response.get('operations'):
                         operation = response['operations'][0]
                         self.log(f"[T2V-PURE] ✓ Video operation started")
 
-                        # Build headers cho polling
                         headers = {
                             "Authorization": self.bearer_token,
                             "Content-Type": "application/json",
@@ -3926,7 +4277,6 @@ class DrissionFlowAPI:
                             bridge_url = f"http://127.0.0.1:{self._bridge_port}"
                             proxies = {"http": bridge_url, "https": bridge_url}
 
-                        # Poll cho video hoàn thành
                         video_url = self._poll_video_operation(operation, headers, proxies, max_wait)
 
                         if video_url:
@@ -3935,7 +4285,6 @@ class DrissionFlowAPI:
                         else:
                             return False, None, "Timeout hoặc lỗi khi poll video"
 
-                    # Check for direct video URL
                     if response.get('videos'):
                         video = response['videos'][0]
                         video_url = video.get('videoUri') or video.get('uri')
@@ -3956,10 +4305,12 @@ class DrissionFlowAPI:
         prompt: str,
         save_path: Optional[Path] = None,
         max_wait: int = 300,
-        timeout: int = 60
+        timeout: int = 60,
+        max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Tạo video bằng MODIFY MODE - GIỐNG HỆT TẠO ẢNH.
+        Có retry và xử lý 403 + IPv6 như generate_image.
 
         Flow:
         1. Chuyển Chrome sang "Tạo video từ các thành phần"
@@ -3975,6 +4326,7 @@ class DrissionFlowAPI:
             save_path: Đường dẫn lưu video
             max_wait: Thời gian poll tối đa (giây)
             timeout: Timeout đợi response đầu tiên
+            max_retries: Số lần retry khi gặp 403
 
         Returns:
             Tuple[success, video_path_or_url, error]
@@ -3985,10 +4337,94 @@ class DrissionFlowAPI:
         if not media_id:
             return False, None, "Media ID không được để trống"
 
+        last_error = None
+
+        for attempt in range(max_retries):
+            success, result, error = self._execute_video_modify_mode(
+                media_id=media_id,
+                prompt=prompt,
+                save_path=save_path,
+                max_wait=max_wait,
+                timeout=timeout
+            )
+
+            if success:
+                if self._consecutive_403 > 0:
+                    self.log(f"[I2V-MODIFY] Reset 403 counter (was {self._consecutive_403})")
+                    self._consecutive_403 = 0
+                return True, result, None
+
+            if error:
+                last_error = error
+
+                # === 403 ERROR: RESET CHROME + IPv6 ===
+                if "403" in str(error):
+                    self._consecutive_403 += 1
+                    self.log(f"[I2V-MODIFY] ⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
+
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V-MODIFY 403")
+                        self.log(f"[I2V-MODIFY] → Webshare rotate: {msg}", "WARN")
+
+                    rotate_ipv6 = False
+                    if self._consecutive_403 >= self._max_403_before_ipv6:
+                        self._consecutive_403 = 0
+                        if not self._ipv6_activated:
+                            self.log(f"[I2V-MODIFY] → 🌐 ACTIVATE IPv6 MODE (lần đầu)...")
+                            self._activate_ipv6()
+                        else:
+                            self.log(f"[I2V-MODIFY] → 🔄 Rotate sang IPv6 khác...")
+                            rotate_ipv6 = True
+
+                    if self.restart_chrome(rotate_ipv6=rotate_ipv6):
+                        self.log("[I2V-MODIFY] → Chrome restarted, tiếp tục...")
+                        continue
+                    else:
+                        return False, None, "Không restart được Chrome sau 403"
+
+                # === TIMEOUT ERROR ===
+                if "timeout" in str(error).lower():
+                    self.log(f"[I2V-MODIFY] ⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V-MODIFY Timeout")
+                        self.log(f"[I2V-MODIFY] → Webshare rotate: {msg}", "WARN")
+
+                    if attempt < max_retries - 1:
+                        if self.restart_chrome():
+                            continue
+
+                # === 500 ERROR ===
+                if "500" in str(error):
+                    self.log(f"[I2V-MODIFY] ⚠️ 500 Internal Error (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+                        continue
+
+                return False, None, error
+
+        return False, None, last_error or "Max retries exceeded"
+
+    def _execute_video_modify_mode(
+        self,
+        media_id: str,
+        prompt: str,
+        save_path: Optional[Path],
+        max_wait: int,
+        timeout: int
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Thực hiện tạo video MODIFY mode một lần (không retry)."""
         self.log(f"[I2V] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[I2V] Prompt: {prompt[:60]}...")
 
-        # 1. Chuyển sang video mode (dùng function có retry)
+        # 1. Chuyển sang video mode
         if not self.switch_to_video_mode():
             self.log("[I2V] ⚠️ Không chuyển được video mode, thử tiếp...", "WARN")
 
@@ -4001,8 +4437,7 @@ class DrissionFlowAPI:
             window._customVideoPayload = null;
         """)
 
-        # 3. Set MODIFY CONFIG - chỉ thêm referenceImages
-        # Interceptor sẽ thêm vào payload Chrome, giữ nguyên model/settings
+        # 3. Set MODIFY CONFIG
         modify_config = {
             "referenceImages": [{
                 "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
@@ -4012,22 +4447,19 @@ class DrissionFlowAPI:
         self.driver.run_js(f"window._modifyVideoConfig = {json.dumps(modify_config)};")
         self.log(f"[I2V] ✓ MODIFY MODE: referenceImages ready")
 
-        # 4. Tìm textarea và nhập prompt (Ctrl+V để tránh bot detection)
+        # 4. Tìm textarea và nhập prompt
         textarea = self._find_textarea()
         if not textarea:
             return False, None, "Không tìm thấy textarea"
 
-        # Paste bằng Ctrl+V (như thủ công)
         self._paste_prompt_ctrlv(textarea, prompt)
-
-        # Đợi reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        # Nhấn Enter để gửi
+        # Nhấn Enter
         textarea.input('\n')
         self.log("[I2V] → Pressed Enter, Chrome đang gửi request...")
 
-        # 5. Đợi video response từ browser
+        # 5. Đợi video response
         start_time = time.time()
 
         while time.time() - start_time < timeout:
@@ -4047,7 +4479,6 @@ class DrissionFlowAPI:
             if result.get('response'):
                 response_data = result['response']
 
-                # Check for API errors
                 if isinstance(response_data, dict):
                     if response_data.get('error'):
                         error_info = response_data['error']
@@ -4055,7 +4486,6 @@ class DrissionFlowAPI:
                         self.log(f"[I2V] ✗ API Error: {error_msg}", "ERROR")
                         return False, None, error_msg
 
-                    # Check nếu có video ngay trong response
                     if "media" in response_data or "generatedVideos" in response_data:
                         videos = response_data.get("generatedVideos", response_data.get("media", []))
                         if videos:
@@ -4064,13 +4494,11 @@ class DrissionFlowAPI:
                                 self.log(f"[I2V] ✓ Video ready (no poll): {video_url[:60]}...")
                                 return self._download_video_if_needed(video_url, save_path)
 
-                    # Có operations - cần poll
                     operations = response_data.get("operations", [])
                     if operations:
                         self.log(f"[I2V] Got {len(operations)} operations, polling...")
                         op = operations[0]
 
-                        # Build headers cho polling
                         headers = {
                             "Authorization": self.bearer_token,
                             "Content-Type": "application/json",
@@ -4085,7 +4513,6 @@ class DrissionFlowAPI:
                             bridge_url = f"http://127.0.0.1:{self._bridge_port}"
                             proxies = {"http": bridge_url, "https": bridge_url}
 
-                        # Poll cho video hoàn thành
                         video_url = self._poll_video_operation(op, headers, proxies, max_wait)
 
                         if video_url:
