@@ -3410,33 +3410,93 @@ class DrissionFlowAPI:
             return False
 
     def switch_to_video_mode(self) -> bool:
-        """Chuyển Chrome sang mode tạo video từ ảnh (3 bước với delay)."""
+        """Chuyển Chrome sang mode tạo video từ ảnh (với retry và delay tốt hơn)."""
         if not self._ready:
             return False
-        try:
-            # Bước 1: Click dropdown lần 1 (đóng nếu đang mở)
-            r1 = self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP1)
-            if r1 == 'NO_DROPDOWN':
-                self.log("[Mode] Dropdown not found", "WARN")
-                return False
-            time.sleep(0.1)
 
-            # Bước 2: Click dropdown lần 2 (mở lại)
-            r2 = self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP2)
-            time.sleep(0.3)
+        MAX_RETRIES = 3
 
-            # Bước 3: Tìm và click option
-            result = self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP3)
-            if result == 'CLICKED':
-                self.log("[Mode] ✓ Đã chuyển sang Video mode")
+        for attempt in range(MAX_RETRIES):
+            try:
+                self.log(f"[Mode] Chuyển sang Video mode (attempt {attempt + 1}/{MAX_RETRIES})...")
+
+                # Bước 1: Tìm và click dropdown để mở menu
+                dropdown_clicked = self.driver.run_js('''
+                (function() {
+                    // Tìm dropdown bằng nhiều cách
+                    var dropdown = document.querySelector('button[role="combobox"]');
+                    if (!dropdown) {
+                        dropdown = document.querySelector('[aria-haspopup="listbox"]');
+                    }
+                    if (!dropdown) {
+                        // Tìm theo text hiển thị
+                        var buttons = document.querySelectorAll('button');
+                        for (var btn of buttons) {
+                            var text = (btn.textContent || '').toLowerCase();
+                            if (text.includes('hình ảnh') || text.includes('image') || text.includes('video')) {
+                                dropdown = btn;
+                                break;
+                            }
+                        }
+                    }
+                    if (!dropdown) {
+                        return 'NO_DROPDOWN';
+                    }
+                    dropdown.click();
+                    return 'CLICKED';
+                })();
+                ''')
+
+                if dropdown_clicked == 'NO_DROPDOWN':
+                    self.log("[Mode] Dropdown not found, retrying...", "WARN")
+                    time.sleep(1)
+                    continue
+
+                # Đợi menu mở
                 time.sleep(0.5)
-                return True
-            else:
-                self.log(f"[Mode] Không tìm thấy Video option: {result}", "WARN")
-                return False
-        except Exception as e:
-            self.log(f"[Mode] Error: {e}", "ERROR")
-            return False
+
+                # Bước 2: Tìm và click option "Tạo video từ các thành phần"
+                option_clicked = self.driver.run_js('''
+                (function() {
+                    // Tìm tất cả options trong menu
+                    var options = document.querySelectorAll('[role="option"], [role="menuitem"], li, span');
+                    for (var el of options) {
+                        var text = (el.textContent || '').trim().toLowerCase();
+                        // Vietnamese: "Tạo video từ các thành phần"
+                        // English: "Create video from assets" / "Generate video from assets"
+                        if (text.includes('video') && (text.includes('thành phần') || text.includes('assets') || text.includes('elements') || text.includes('components'))) {
+                            el.click();
+                            console.log('[VIDEO MODE] Clicked: ' + text);
+                            return 'CLICKED:' + text;
+                        }
+                    }
+                    // Không tìm thấy - log available options
+                    var found = [];
+                    for (var el of options) {
+                        var text = (el.textContent || '').trim();
+                        if (text && text.length < 100) found.push(text);
+                    }
+                    return 'NOT_FOUND:' + found.slice(0, 5).join('|');
+                })();
+                ''')
+
+                if option_clicked.startswith('CLICKED:'):
+                    self.log(f"[Mode] ✓ Đã chuyển sang Video mode: {option_clicked}")
+                    time.sleep(0.5)
+                    return True
+                else:
+                    self.log(f"[Mode] Không tìm thấy Video option: {option_clicked}", "WARN")
+                    # Click lại dropdown để đóng menu
+                    self.driver.run_js('document.body.click();')
+                    time.sleep(0.5)
+                    continue
+
+            except Exception as e:
+                self.log(f"[Mode] Error: {e}", "ERROR")
+                time.sleep(0.5)
+
+        self.log("[Mode] ✗ Không thể chuyển sang Video mode sau nhiều lần thử", "ERROR")
+        return False
 
     def generate_video_force_mode(
         self,
@@ -3985,18 +4045,9 @@ class DrissionFlowAPI:
         self.log(f"[I2V] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[I2V] Prompt: {prompt[:60]}...")
 
-        # 1. Chuyển sang video mode (3 bước với delay)
-        self.log("[I2V] Chuyển sang mode 'Tạo video từ các thành phần'...")
-        self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP1)  # Click 1
-        time.sleep(0.1)
-        self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP2)  # Click 2
-        time.sleep(0.3)
-        result = self.driver.run_js(JS_SELECT_VIDEO_MODE_STEP3)  # Click option
-        if result == 'CLICKED':
-            self.log("[I2V] ✓ Đã chuyển sang video mode")
-            time.sleep(1)
-        else:
-            self.log(f"[I2V] Không thể chuyển sang video mode: {result}", "WARN")
+        # 1. Chuyển sang video mode (dùng function có retry)
+        if not self.switch_to_video_mode():
+            self.log("[I2V] ⚠️ Không chuyển được video mode, thử tiếp...", "WARN")
 
         # 2. Reset video state
         self.driver.run_js("""
