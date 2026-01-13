@@ -3947,26 +3947,32 @@ class DrissionFlowAPI:
 
             # Check operations status
             if result.get('operations'):
-                op = result['operations'][0]
-                op_done = op.get('done', False)
-                progress = op.get('metadata', {}).get('progressPercent', 0)
+                op_item = result['operations'][0]
 
-                self.log(f"[I2V-FORCE] Progress: {progress}%, Done: {op_done}")
+                # Format mới: status field thay vì done
+                status = op_item.get('status', '')
+                op_done = status == 'MEDIA_GENERATION_STATUS_SUCCESSFUL'
+
+                # Operation data nằm trong nested 'operation' object
+                op_data = op_item.get('operation', {})
+                progress = op_data.get('metadata', {}).get('progressPercent', 0)
+
+                self.log(f"[I2V-FORCE] Status: {status}, Done: {op_done}")
 
                 if op_done:
-                    # Lấy video URL từ response
-                    if op.get('response', {}).get('videos'):
-                        video = op['response']['videos'][0]
-                        video_url = video.get('videoUri') or video.get('uri')
-                        if video_url:
-                            self.log(f"[I2V-FORCE] ✓ Video completed!")
-                            return video_url
+                    # Video URL ở operation.metadata.video.fifeUrl
+                    video_url = op_data.get('metadata', {}).get('video', {}).get('fifeUrl')
+                    if video_url:
+                        self.log(f"[I2V-FORCE] ✓ Video completed!")
+                        self.log(f"[I2V-FORCE] URL: {video_url[:80]}...")
+                        return video_url
+                    else:
+                        self.log(f"[I2V-FORCE] ⚠️ Video done but URL not found", "WARN")
 
-                    # Check error
-                    if op.get('error'):
-                        err_msg = op['error'].get('message', 'Unknown error')
-                        self.log(f"[I2V-FORCE] ✗ Video error: {err_msg}", "ERROR")
-                        return None
+                # Check error status
+                if status == 'MEDIA_GENERATION_STATUS_FAILED':
+                    self.log(f"[I2V-FORCE] ✗ Video generation failed", "ERROR")
+                    return None
 
             time.sleep(poll_interval)
 
