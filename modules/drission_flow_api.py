@@ -4569,11 +4569,10 @@ class DrissionFlowAPI:
         self.log(f"[I2V] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[I2V] Prompt: {prompt[:60]}...")
 
-        # 1. Chuyển sang video mode
-        if not self.switch_to_video_mode():
-            self.log("[I2V] ⚠️ Không chuyển được video mode, thử tiếp...", "WARN")
+        # NOTE: Không cần switch_to_video_mode() ở đây
+        # Chrome đã được switch sang I2V mode 1 LẦN sau khi load page
 
-        # 2. Reset video state
+        # 1. Reset video state
         self.driver.run_js("""
             window._videoResponse = null;
             window._videoError = null;
@@ -4641,24 +4640,12 @@ class DrissionFlowAPI:
 
                     operations = response_data.get("operations", [])
                     if operations:
-                        self.log(f"[I2V] Got {len(operations)} operations, polling...")
                         op = operations[0]
+                        op_name = op.get('name', '')
+                        self.log(f"[I2V] ✓ Video operation started: {op_name[-30:]}...")
 
-                        headers = {
-                            "Authorization": self.bearer_token,
-                            "Content-Type": "application/json",
-                            "Origin": "https://labs.google",
-                            "Referer": "https://labs.google/",
-                        }
-                        if self.x_browser_validation:
-                            headers["x-browser-validation"] = self.x_browser_validation
-
-                        proxies = None
-                        if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
-                            bridge_url = f"http://127.0.0.1:{self._bridge_port}"
-                            proxies = {"http": bridge_url, "https": bridge_url}
-
-                        video_url = self._poll_video_operation(op, headers, proxies, max_wait)
+                        # Poll qua Browser (dùng Chrome's auth)
+                        video_url = self._poll_video_operation_browser(op, max_wait)
 
                         if video_url:
                             self.log(f"[I2V] ✓ Video ready: {video_url[:60]}...")
