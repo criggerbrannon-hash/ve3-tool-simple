@@ -4578,6 +4578,17 @@ class SmartEngine:
 
         self.log("[PARALLEL-VIDEO] Chrome 2 loop started")
 
+        # === ĐỢI CHROME 1 KHỞI ĐỘNG TRƯỚC ===
+        # Chrome 1 cần thời gian để mở và ổn định, Chrome 2 mở sau
+        wait_time = 20  # giây
+        self.log(f"[PARALLEL-VIDEO] Đợi {wait_time} giây để Chrome 1 khởi động và ổn định...")
+        for i in range(wait_time):
+            if not self._parallel_video_running or self.stop_flag:
+                self.log("[PARALLEL-VIDEO] Bị dừng trong khi đợi")
+                return
+            time.sleep(1)
+        self.log("[PARALLEL-VIDEO] Chrome 1 đã sẵn sàng - Bắt đầu mở Chrome 2...")
+
         # Load settings
         config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
         cfg = {}
@@ -4597,27 +4608,46 @@ class SmartEngine:
         video_cfg = cfg.get('video_generation', {})
         video_count = video_cfg.get('count', -1)  # -1 = all (default)
 
-        # Chrome profile - dùng profile khác với Chrome 1
+        # === TÌM CHROME PORTABLE THỨ 2 CHO VIDEO ===
+        # Chrome 2 cần Chrome Portable riêng biệt (VD: "GoogleChromePortable - Copy")
         root_dir = Path(__file__).parent.parent
-        profiles_dir = root_dir / cfg.get('browser_profiles_dir', './chrome_profiles')
+        chrome2_portable = None
 
-        profile_dir = None
-        if profiles_dir.exists():
-            # Tìm profile thứ 2 (khác profile đầu tiên)
-            available_profiles = sorted([p for p in profiles_dir.iterdir() if p.is_dir() and not p.name.startswith('.')])
-            if len(available_profiles) >= 2:
-                profile_dir = str(available_profiles[1])  # Profile thứ 2
-            elif available_profiles:
-                # Chỉ có 1 profile - tạo profile mới cho video
-                profile_dir = str(profiles_dir / "video_chrome")
-                Path(profile_dir).mkdir(exist_ok=True)
+        self.log(f"[PARALLEL-VIDEO] Tìm Chrome Portable cho video...")
 
-        if not profile_dir:
-            self.log("[PARALLEL-VIDEO] Không có Chrome profile cho video!", "WARN")
+        # Tìm Chrome Portable copy cho video (ưu tiên thứ tự)
+        chrome2_search_paths = []
+
+        if self.chrome_portable:
+            chrome1_path = Path(self.chrome_portable)
+            chrome1_dir = chrome1_path.parent
+            # Tìm trong cùng folder với Chrome 1
+            chrome2_search_paths.extend([
+                chrome1_dir.parent / "GoogleChromePortable - Copy" / "GoogleChromePortable.exe",
+                chrome1_dir.parent / "GoogleChromePortable_Video" / "GoogleChromePortable.exe",
+                chrome1_dir.parent / "ChromeVideo" / "GoogleChromePortable.exe",
+            ])
+
+        # Tìm trong thư mục tool
+        chrome2_search_paths.extend([
+            root_dir / "GoogleChromePortable - Copy" / "GoogleChromePortable.exe",
+            root_dir / "GoogleChromePortable_Video" / "GoogleChromePortable.exe",
+        ])
+
+        for path in chrome2_search_paths:
+            self.log(f"[PARALLEL-VIDEO]   Check: {path}")
+            if path.exists():
+                chrome2_portable = str(path)
+                self.log(f"[PARALLEL-VIDEO]   ✓ Found Chrome 2!")
+                break
+
+        if not chrome2_portable:
+            self.log(f"[PARALLEL-VIDEO] KHÔNG tìm thấy Chrome Portable cho video!", "ERROR")
+            self.log(f"[PARALLEL-VIDEO] Hãy copy GoogleChromePortable thành 'GoogleChromePortable - Copy'", "ERROR")
             self._parallel_video_running = False
             return
 
-        self.log(f"[PARALLEL-VIDEO] Chrome profile: {profile_dir}")
+        self.log(f"[PARALLEL-VIDEO] Chrome 2: {chrome2_portable}")
 
         # === KHỞI TẠO PROXY MANAGER ===
         if use_webshare:
@@ -4645,11 +4675,34 @@ class SmartEngine:
                 self.log(f"[PARALLEL-VIDEO] Proxy init error: {e}", "WARN")
                 use_webshare = False
 
+        # === ĐỌC PROJECT URL TỪ EXCEL ===
+        project_url = None
+        try:
+            import openpyxl
+            wb_config = openpyxl.load_workbook(excel_path)
+            if 'config' in wb_config.sheetnames:
+                ws = wb_config['config']
+                for row in ws.iter_rows(min_row=1, max_row=10, values_only=True):
+                    if row and len(row) >= 2:
+                        key = str(row[0] or '').strip().lower()
+                        if key == 'flow_project_url' and row[1]:
+                            project_url = str(row[1]).strip()
+                            self.log(f"[PARALLEL-VIDEO] Project URL từ Excel: {project_url[:60]}...")
+                            break
+            wb_config.close()
+        except Exception as e:
+            self.log(f"[PARALLEL-VIDEO] Lỗi đọc project URL: {e}", "WARN")
+
+        if not project_url:
+            self.log("[PARALLEL-VIDEO] Không có project URL trong Excel - cần tạo ảnh trước!", "WARN")
+            self._parallel_video_running = False
+            return
+
         # === MỞ CHROME 2 (bên phải màn hình) ===
+        # Chrome 2 dùng Chrome Portable riêng biệt (GoogleChromePortable - Copy)
         drission_api = None
         try:
             drission_api = DrissionFlowAPI(
-                profile_dir=profile_dir,
                 verbose=True,
                 log_callback=lambda msg, lvl="INFO": self.log(f"[PARALLEL-VIDEO] {msg}", lvl),
                 webshare_enabled=use_webshare,
@@ -4657,10 +4710,11 @@ class SmartEngine:
                 total_workers=2,  # Chia đôi màn hình
                 headless=headless_mode,
                 machine_id=machine_id + 100,  # Khác machine_id với Chrome 1
-                chrome_portable=self.chrome_portable
+                chrome_portable=chrome2_portable  # Chrome Portable riêng cho video
             )
 
-            if not drission_api.setup():
+            # Mở đúng project URL từ Excel
+            if not drission_api.setup(project_url=project_url):
                 self.log("[PARALLEL-VIDEO] Không setup được Chrome 2!", "ERROR")
                 self._parallel_video_running = False
                 return
@@ -4710,7 +4764,7 @@ class SmartEngine:
                     scenes = wb.get_scenes()
                     video_prompt = "Subtle motion, cinematic, slow movement"
                     for scene in scenes:
-                        if str(scene.id) == str(scene_id):
+                        if str(scene.scene_id) == str(scene_id):
                             video_prompt = scene.video_prompt or video_prompt
                             break
 

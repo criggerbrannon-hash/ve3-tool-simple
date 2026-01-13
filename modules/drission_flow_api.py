@@ -669,33 +669,56 @@ JS_SELECT_VIDEO_MODE = JS_SELECT_VIDEO_MODE_STEP1
 # Flow mới: Chrome gửi T2V request → Interceptor convert sang I2V
 # ============================================================================
 
-# T2V Mode - Bước 1: Click dropdown
+# T2V Mode - JS ALL-IN-ONE với setTimeout (đợi dropdown mở)
+# Vietnamese: "Từ văn bản sang video" = 22 ký tự
+JS_SELECT_T2V_MODE_ALL = '''
+(function() {
+    window._t2vResult = 'PENDING';
+    var btn = document.querySelector('button[role="combobox"]');
+    if (!btn) {
+        window._t2vResult = 'NO_DROPDOWN';
+        return;
+    }
+    btn.click();
+    setTimeout(function() {
+        btn.click();
+        setTimeout(function() {
+            var spans = document.querySelectorAll('span');
+            for (var el of spans) {
+                var text = el.textContent.trim();
+                if (text.includes('video') && text.length === 22) {
+                    console.log('FOUND:', text);
+                    el.click();
+                    window._t2vResult = 'CLICKED';
+                    return;
+                }
+            }
+            console.log('NOT FOUND');
+            window._t2vResult = 'NOT_FOUND';
+        }, 300);
+    }, 100);
+})();
+'''
+
+# Legacy: Các bước riêng lẻ (backup)
 JS_SELECT_T2V_MODE_STEP1 = '''
 (function() {
     var dropdown = document.querySelector('button[role="combobox"]');
-    if (!dropdown) {
-        return 'NO_DROPDOWN';
-    }
+    if (!dropdown) { return 'NO_DROPDOWN'; }
     dropdown.click();
     return 'CLICKED_FIRST';
 })();
 '''
 
-# T2V Mode - Bước 2: Click dropdown lần 2 để mở lại
 JS_SELECT_T2V_MODE_STEP2 = '''
 (function() {
     var dropdown = document.querySelector('button[role="combobox"]');
-    if (!dropdown) {
-        return 'NO_DROPDOWN';
-    }
+    if (!dropdown) { return 'NO_DROPDOWN'; }
     dropdown.click();
     return 'CLICKED_SECOND';
 })();
 '''
 
-# T2V Mode - Bước 3: Tìm và click option
-# Vietnamese: "Từ văn bản sang video" = 22 ký tự
-# English: "Text to video" = 13 ký tự
 JS_SELECT_T2V_MODE_STEP3 = '''
 (function() {
     var spans = document.querySelectorAll('span');
@@ -747,6 +770,7 @@ class DrissionFlowAPI:
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
         # Chrome portable - dùng Chrome đã đăng nhập sẵn
         chrome_portable: str = "",  # Đường dẫn Chrome portable (VD: C:\ve3\chrome.exe)
+        skip_portable_detection: bool = False,  # Bỏ qua auto-detect Chrome Portable (dùng profile_dir)
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -772,6 +796,7 @@ class DrissionFlowAPI:
         self._headless = headless  # Lưu setting headless
         self._machine_id = machine_id  # Máy số mấy (1-99)
         self._chrome_portable = chrome_portable  # Chrome portable path
+        self._skip_portable_detection = skip_portable_detection  # Bỏ qua auto-detect Chrome Portable
         # Unique port cho mỗi worker (không random để tránh conflict)
         # Worker 0 → 9222, Worker 1 → 9223, ...
         if chrome_port == 0:
@@ -1293,14 +1318,20 @@ class DrissionFlowAPI:
                 chrome_exe = os.path.expandvars(self._chrome_portable)
                 chrome_dir = Path(chrome_exe).parent
                 self.log(f"[CHROME] Dùng chrome_portable: {chrome_exe}")
-                # User Data có thể ở: ve3/User Data hoặc ve3/Data/profile
-                for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
-                    if data_path.exists():
-                        user_data = data_path
-                        break
+                # User Data: Nếu skip_portable_detection=True, dùng profile_dir thay vì built-in profile
+                if self._skip_portable_detection:
+                    # Dùng profile_dir riêng (Chrome 2 với profile đã copy)
+                    user_data = self.profile_dir
+                    self.log(f"[CHROME] Dùng profile riêng: {user_data}")
+                else:
+                    # User Data có thể ở: ve3/User Data hoặc ve3/Data/profile
+                    for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
+                        if data_path.exists():
+                            user_data = data_path
+                            break
 
-            # 2. Tự động detect Chrome portable
-            if not chrome_exe and platform.system() == 'Windows':
+            # 2. Tự động detect Chrome portable (bỏ qua nếu skip_portable_detection=True)
+            if not chrome_exe and platform.system() == 'Windows' and not self._skip_portable_detection:
                 chrome_locations = []
 
                 # 2a. Ưu tiên: Thư mục tool/GoogleChromePortable/GoogleChromePortable.exe
@@ -2068,6 +2099,20 @@ class DrissionFlowAPI:
             total = self._total_workers
             worker = self.worker_id
 
+            # Helper để set window position (tương thích nhiều version DrissionPage)
+            def set_window_rect(x, y, w, h):
+                try:
+                    # Thử cách mới: set.window.rect()
+                    self.driver.set.window.rect(x, y, w, h)
+                except AttributeError:
+                    try:
+                        # Thử cách cũ: size + position riêng
+                        self.driver.set.window.size(w, h)
+                        self.driver.set.window.position(x, y)
+                    except AttributeError:
+                        # Fallback: dùng JavaScript
+                        self.driver.run_js(f"window.moveTo({x}, {y}); window.resizeTo({w}, {h});")
+
             if total <= 1:
                 # 1 worker: Full màn hình (maximize)
                 self.driver.set.window.max()
@@ -2079,8 +2124,7 @@ class DrissionFlowAPI:
                 win_x = screen_left + (worker * win_w)
                 win_y = screen_top
 
-                self.driver.set.window.size(win_w, win_h)
-                self.driver.set.window.position(win_x, win_y)
+                set_window_rect(win_x, win_y, win_w, win_h)
                 pos_name = "LEFT" if worker == 0 else "RIGHT"
                 self.log(f"📐 Window: {pos_name} ({win_w}x{win_h} at {win_x},{win_y})")
             elif total == 3:
@@ -2098,8 +2142,7 @@ class DrissionFlowAPI:
                     win_x = screen_left
                     win_y = screen_top + screen_h // 2
 
-                self.driver.set.window.size(win_w, win_h)
-                self.driver.set.window.position(win_x, win_y)
+                set_window_rect(win_x, win_y, win_w, win_h)
                 self.log(f"📐 Window: Worker {worker} ({win_w}x{win_h} at {win_x},{win_y})")
             else:
                 # 4+ workers: Grid 2xN
@@ -2114,8 +2157,7 @@ class DrissionFlowAPI:
                 win_x = screen_left + (col * win_w)
                 win_y = screen_top + (row * win_h)
 
-                self.driver.set.window.size(win_w, win_h)
-                self.driver.set.window.position(win_x, win_y)
+                set_window_rect(win_x, win_y, win_w, win_h)
                 self.log(f"📐 Window: Worker {worker} ({win_w}x{win_h} at {win_x},{win_y})")
 
         except Exception as e:
@@ -4057,26 +4099,27 @@ class DrissionFlowAPI:
             try:
                 self.log(f"[Mode] Chuyển sang T2V mode (attempt {attempt + 1}/{MAX_RETRIES})...")
 
-                # Bước 1: Click dropdown lần 1
-                self.driver.run_js(JS_SELECT_T2V_MODE_STEP1)
-                time.sleep(0.5)
+                # Dùng JS ALL-IN-ONE với setTimeout (đợi dropdown mở)
+                self.driver.run_js("window._t2vResult = 'PENDING';")
+                self.driver.run_js(JS_SELECT_T2V_MODE_ALL)
 
-                # Bước 2: Click dropdown lần 2 để mở menu
-                self.driver.run_js(JS_SELECT_T2V_MODE_STEP2)
-                time.sleep(0.5)
+                # Đợi JS async hoàn thành (setTimeout 100ms + 300ms = ~500ms)
+                time.sleep(0.8)
 
-                # Bước 3: Tìm và click option "Từ văn bản sang video"
-                option_clicked = self.driver.run_js(JS_SELECT_T2V_MODE_STEP3)
+                # Kiểm tra kết quả
+                result = self.driver.run_js("return window._t2vResult;")
 
-                if option_clicked == 'CLICKED':
+                if result == 'CLICKED':
                     self.log("[Mode] ✓ Đã chuyển sang T2V mode")
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                     return True
+                elif result == 'NO_DROPDOWN':
+                    self.log("[Mode] Không tìm thấy dropdown button", "WARN")
                 else:
-                    self.log(f"[Mode] Không tìm thấy T2V option: {option_clicked}", "WARN")
+                    self.log(f"[Mode] Không tìm thấy T2V option: {result}", "WARN")
                     # Click ra ngoài để đóng menu
                     self.driver.run_js('document.body.click();')
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                     continue
 
             except Exception as e:
