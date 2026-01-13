@@ -173,22 +173,28 @@ def process_project_video(code: str, video_count: int = -1, callback=None) -> bo
             log(f"  ⚠️ Error reading Excel: {e}")
 
         # Method 2: Read from .media_cache.json (same as SmartEngine uses)
+        # Try both flat and nested locations
         if not project_url:
-            cache_file = local_dir / ".media_cache.json"
-            if cache_file.exists():
-                try:
-                    import json
-                    with open(cache_file, 'r', encoding='utf-8') as f:
-                        cache_data = json.load(f)
-                    project_url = cache_data.get('_project_url', '')
-                    if not project_url:
-                        project_id = cache_data.get('_project_id', '')
-                        if project_id:
-                            project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
-                    if project_url:
-                        log(f"  📦 Found project URL from cache")
-                except Exception as e:
-                    log(f"  ⚠️ Error reading cache: {e}")
+            cache_locations = [
+                local_dir / ".media_cache.json",  # Flat structure
+                local_dir / "prompts" / ".media_cache.json",  # Nested structure
+            ]
+            for cache_file in cache_locations:
+                if cache_file.exists():
+                    try:
+                        import json
+                        with open(cache_file, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                        project_url = cache_data.get('_project_url', '')
+                        if not project_url:
+                            project_id = cache_data.get('_project_id', '')
+                            if project_id:
+                                project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
+                        if project_url:
+                            log(f"  📦 Found project URL from cache: {cache_file.name}")
+                            break
+                    except Exception as e:
+                        log(f"  ⚠️ Error reading cache {cache_file}: {e}")
 
         if not project_url:
             log(f"  ❌ No project URL in Excel or cache!")
