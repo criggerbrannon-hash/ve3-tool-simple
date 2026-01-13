@@ -409,6 +409,7 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                     var t2vConfig = window._t2vToI2vConfig;
                     console.log('[T2V→I2V] Converting Text-to-Video request to Image-to-Video...');
                     console.log('[T2V→I2V] Original URL:', urlStr);
+                    console.log('[T2V→I2V] Chrome original payload:', JSON.stringify(chromeVideoBody, null, 2));
 
                     // 1. Đổi URL: batchAsyncGenerateVideoText → batchAsyncGenerateVideoReferenceImages
                     var newUrl = urlStr.replace('batchAsyncGenerateVideoText', 'batchAsyncGenerateVideoReferenceImages');
@@ -445,6 +446,7 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                     // Update body với payload đã convert
                     opts.body = JSON.stringify(chromeVideoBody);
                     console.log('[T2V→I2V] Conversion complete, sending I2V request...');
+                    console.log('[T2V→I2V] Final payload:', JSON.stringify(chromeVideoBody, null, 2));
 
                     // Clear config
                     window._t2vToI2vConfig = null;
@@ -4102,11 +4104,18 @@ class DrissionFlowAPI:
         self.log(f"[T2V→I2V] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[T2V→I2V] Prompt: {prompt[:60]}...")
 
-        # NOTE: Không cần switch_to_t2v_mode() ở đây
-        # Chrome đã được switch sang T2V mode 1 LẦN sau khi load page
-        # Việc switch lại mỗi lần là THỪA
+        # 1. Chuyển sang T2V mode (CẦN THIẾT - phải switch mỗi lần như cleanup branch)
+        self.log("[T2V→I2V] Chuyển sang mode 'Từ văn bản sang video'...")
+        result = self.driver.run_js(JS_SELECT_T2V_MODE_ALL)
+        time.sleep(0.8)  # Đợi dropdown animation
+        t2v_result = self.driver.run_js("return window._t2vResult;")
+        if t2v_result == 'CLICKED':
+            self.log("[T2V→I2V] ✓ Đã chuyển sang T2V mode")
+            time.sleep(0.5)
+        else:
+            self.log(f"[T2V→I2V] ⚠️ T2V mode result: {t2v_result}", "WARN")
 
-        # 1. Reset video state
+        # 2. Reset video state
         self.driver.run_js("""
             window._videoResponse = null;
             window._videoError = null;
