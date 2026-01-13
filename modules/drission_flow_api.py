@@ -350,15 +350,22 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                     var data = await cloned.json();
                     console.log('[RESPONSE] Status:', response.status);
 
-                    // KHÔNG trigger từ batchGenerateImages response!
-                    // Response có thể chứa media CŨ của project, không phải ảnh mới.
-                    // Luôn đợi getProject poll với baseline tracking để detect ảnh MỚI.
-                    if (data.media) {
-                        console.log('[RESPONSE] Got ' + data.media.length + ' media items, but waiting for getProject to detect NEW image...');
+                    // Check nếu có media MỚI với fifeUrl → trigger ngay
+                    if (data.media && data.media.length > 0) {
+                        var readyMedia = data.media.filter(function(m) {
+                            return m.image && m.image.generatedImage && m.image.generatedImage.fifeUrl;
+                        });
+
+                        if (readyMedia.length > 0) {
+                            console.log('[RESPONSE] ✓ Got ' + readyMedia.length + ' images with fifeUrl!');
+                            window._response = data;
+                            window._requestPending = false;
+                        } else {
+                            console.log('[RESPONSE] Media exists but no fifeUrl yet, waiting...');
+                        }
                     } else {
-                        console.log('[RESPONSE] No media yet, waiting for getProject poll...');
+                        console.log('[RESPONSE] No media yet, waiting for poll...');
                     }
-                    // Giữ _requestPending = true để getProject handler có thể trigger
                 } catch(e) {
                     window._response = {status: response.status, error: 'parse_failed'};
                     window._requestPending = false;
