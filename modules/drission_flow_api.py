@@ -211,6 +211,7 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
             window._response = null;
             window._responseError = null;
             window._url = urlStr;
+            window._lastMediaCount = null;  // Reset để getProject poll set baseline
 
             // Capture headers
             if (opts && opts.headers) {
@@ -591,16 +592,28 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
 
                 try {
                     var data = await cloned.json();
-                    // Nếu có media mới với fifeUrl VÀ đang đợi response
-                    if (data.media && data.media.length > 0 && window._requestPending) {
-                        var hasNewMedia = data.media.some(function(m) {
+                    // Nếu đang đợi response VÀ có media
+                    if (data.media && window._requestPending) {
+                        var currentMediaCount = data.media.length;
+
+                        // Đếm số media có fifeUrl (ảnh đã ready)
+                        var readyCount = data.media.filter(function(m) {
                             return m.image && m.image.generatedImage && m.image.generatedImage.fifeUrl;
-                        });
-                        if (hasNewMedia) {
-                            console.log('[PROJECT] ✓ Found media with fifeUrl! Images ready.');
-                            console.log('[PROJECT] Media count:', data.media.length);
-                            window._response = data;
-                            window._requestPending = false;
+                        }).length;
+
+                        // Lần poll đầu tiên: set baseline
+                        if (window._lastMediaCount === null) {
+                            window._lastMediaCount = readyCount;
+                            console.log('[PROJECT] Baseline set:', readyCount, 'ready images');
+                        } else {
+                            console.log('[PROJECT] Media:', currentMediaCount, 'Ready:', readyCount, 'Baseline:', window._lastMediaCount);
+
+                            // Chỉ accept khi số ảnh ready TĂNG LÊN so với baseline
+                            if (readyCount > window._lastMediaCount) {
+                                console.log('[PROJECT] ✓ New image ready! (' + window._lastMediaCount + ' → ' + readyCount + ')');
+                                window._response = data;
+                                window._requestPending = false;
+                            }
                         }
                     }
                 } catch(e) {
