@@ -350,24 +350,15 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                     var data = await cloned.json();
                     console.log('[RESPONSE] Status:', response.status);
 
-                    // Chỉ set response nếu có media với fifeUrl (ảnh đã tạo xong)
-                    // Nếu chỉ có workflow ID → đợi getProject poll
-                    var hasReadyMedia = data.media && data.media.some(function(m) {
-                        return m.image && m.image.generatedImage && m.image.generatedImage.fifeUrl;
-                    });
-
-                    if (hasReadyMedia) {
-                        console.log('[RESPONSE] ✓ Got ' + data.media.length + ' images with fifeUrl!');
-                        window._response = data;
-                        window._requestPending = false;
-                    } else if (data.media) {
-                        console.log('[RESPONSE] Got media but no fifeUrl yet, waiting for getProject poll...');
-                        // KHÔNG set _response, KHÔNG set _requestPending = false
-                        // Để getProject poll có thể cập nhật sau
+                    // KHÔNG trigger từ batchGenerateImages response!
+                    // Response có thể chứa media CŨ của project, không phải ảnh mới.
+                    // Luôn đợi getProject poll với baseline tracking để detect ảnh MỚI.
+                    if (data.media) {
+                        console.log('[RESPONSE] Got ' + data.media.length + ' media items, but waiting for getProject to detect NEW image...');
                     } else {
-                        console.log('[RESPONSE] No media in response (workflow started), waiting for getProject poll...');
-                        // Có thể là workflow response - đợi getProject poll
+                        console.log('[RESPONSE] No media yet, waiting for getProject poll...');
                     }
+                    // Giữ _requestPending = true để getProject handler có thể trigger
                 } catch(e) {
                     window._response = {status: response.status, error: 'parse_failed'};
                     window._requestPending = false;
