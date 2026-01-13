@@ -672,32 +672,26 @@ JS_SELECT_VIDEO_MODE = JS_SELECT_VIDEO_MODE_STEP1
 # T2V Mode - JS ALL-IN-ONE với setTimeout (đợi dropdown mở)
 # Vietnamese: "Từ văn bản sang video" = 22 ký tự
 JS_SELECT_T2V_MODE_ALL = '''
-(function() {
-    window._t2vResult = 'PENDING';
-    var btn = document.querySelector('button[role="combobox"]');
-    if (!btn) {
-        window._t2vResult = 'NO_DROPDOWN';
-        return;
-    }
+// Tìm bằng video + length 22
+var btn = document.querySelector('button[role="combobox"]');
+btn.click();
+setTimeout(() => {
     btn.click();
-    setTimeout(function() {
-        btn.click();
-        setTimeout(function() {
-            var spans = document.querySelectorAll('span');
-            for (var el of spans) {
-                var text = el.textContent.trim();
-                if (text.includes('video') && text.length === 22) {
-                    console.log('FOUND:', text);
-                    el.click();
-                    window._t2vResult = 'CLICKED';
-                    return;
-                }
+    setTimeout(() => {
+        var spans = document.querySelectorAll('span');
+        for (var el of spans) {
+            var text = el.textContent.trim();
+            if (text.includes('video') && text.length === 22) {
+                console.log('FOUND:', text);
+                el.click();
+                window._t2vResult = 'CLICKED';
+                return;
             }
-            console.log('NOT FOUND');
-            window._t2vResult = 'NOT_FOUND';
-        }, 300);
-    }, 100);
-})();
+        }
+        console.log('NOT FOUND');
+        window._t2vResult = 'NOT_FOUND';
+    }, 300);
+}, 100);
 '''
 
 # Legacy: Các bước riêng lẻ (backup)
