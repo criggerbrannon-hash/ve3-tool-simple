@@ -241,15 +241,16 @@ def process_project_video(code: str, video_count: int = -1, callback=None) -> bo
             chrome_portable=chrome_portable_2
         )
 
-        # Setup Chrome
-        if not api.setup(project_url=project_url, skip_mode_selection=True):
+        # Setup Chrome - PHẢI chọn IMAGE mode để FORCE MODE hoạt động!
+        # FORCE MODE intercepts batchGenerateImages request và convert sang video
+        # Nếu skip_mode_selection=True, mode có thể không phải IMAGE → interceptor không bắt được
+        if not api.setup(project_url=project_url, skip_mode_selection=False):
             log(f"  ❌ Failed to setup Chrome for video!")
             return False
 
-        # FORCE MODE: Stay in IMAGE mode (don't switch to T2V)
-        # FORCE mode intercepts IMAGE requests to get valid reCAPTCHA tokens
-        # T2V mode's reCAPTCHA gets 403 errors
-        log(f"  🎬 Using FORCE MODE (stay in IMAGE mode for reCAPTCHA)")
+        # FORCE MODE: Ở IMAGE mode, interceptor convert IMAGE request → VIDEO request
+        # Đây là cách duy nhất để có fresh reCAPTCHA token (T2V mode bị 403)
+        log(f"  🎬 Using FORCE MODE (IMAGE mode → interceptor convert → VIDEO)")
         time.sleep(1)
 
         # Create videos
