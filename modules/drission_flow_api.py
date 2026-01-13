@@ -2767,7 +2767,9 @@ class DrissionFlowAPI:
 
                     # Đợi 3 giây để reCAPTCHA có thời gian regenerate token mới
                     # Nếu không đợi, request tiếp theo sẽ bị 403
+                    self.log(f"[DEBUG] Sleeping 3s for reCAPTCHA...")
                     time.sleep(3)
+                    self.log(f"[DEBUG] Returning {len(images)} images from generate_image_forward")
 
                     return images, None
 
@@ -2967,11 +2969,13 @@ class DrissionFlowAPI:
             return False, [], last_error or "Max retries exceeded"
 
         # 3. Download và save nếu cần
+        self.log(f"[DEBUG] Starting download phase, save_dir={save_dir}")
         if save_dir:
             save_dir = Path(save_dir)
             save_dir.mkdir(parents=True, exist_ok=True)
 
             for i, img in enumerate(images):
+                self.log(f"[DEBUG] Processing image {i}: has_base64={bool(img.base64_data)}, has_url={bool(img.url)}")
                 fname = filename or f"image_{int(time.time())}"
                 if len(images) > 1:
                     fname = f"{fname}_{i+1}"
@@ -2983,22 +2987,33 @@ class DrissionFlowAPI:
                     self.log(f"✓ Saved: {img_path.name}")
                 elif img.url:
                     # Download from URL - thử ngay, không retry nhiều
-                    self.log(f"→ Downloading...")
+                    dl_start = time.time()
+                    self.log(f"→ Downloading from: {img.url[:80]}...")
                     try:
                         proxies = None
                         if self._use_webshare and self._webshare_proxy:
                             proxies = self._webshare_proxy.get_proxies()
-                        resp = requests.get(img.url, timeout=60, proxies=proxies)
+                            self.log(f"   [DEBUG] Using proxy, get_proxies took {time.time()-dl_start:.2f}s")
+
+                        req_start = time.time()
+                        # Dùng timeout tuple (connect, read) để chắc chắn không bị block lâu
+                        resp = requests.get(img.url, timeout=(30, 60), proxies=proxies)
+                        req_time = time.time() - req_start
+                        self.log(f"   [DEBUG] requests.get took {req_time:.2f}s, status={resp.status_code}")
+
                         if resp.status_code == 200:
                             img_path = save_dir / f"{fname}.png"
+                            write_start = time.time()
                             img_path.write_bytes(resp.content)
+                            self.log(f"   [DEBUG] write_bytes took {time.time()-write_start:.2f}s ({len(resp.content)} bytes)")
                             img.local_path = img_path
                             img.base64_data = base64.b64encode(resp.content).decode()
-                            self.log(f"✓ Downloaded: {img_path.name}")
+                            total_time = time.time() - dl_start
+                            self.log(f"✓ Downloaded: {img_path.name} (total {total_time:.2f}s)")
                         else:
                             self.log(f"✗ Download failed: HTTP {resp.status_code}", "WARN")
                     except Exception as e:
-                        self.log(f"✗ Download error: {e}", "WARN")
+                        self.log(f"✗ Download error after {time.time()-dl_start:.2f}s: {e}", "WARN")
 
         # F5 refresh sau mỗi ảnh thành công để tránh 403 cho prompt tiếp theo
         try:
