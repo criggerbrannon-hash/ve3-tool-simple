@@ -2986,31 +2986,66 @@ class DrissionFlowAPI:
                     img.local_path = img_path
                     self.log(f"✓ Saved: {img_path.name}")
                 elif img.url:
-                    # Download image - URL có signature, tải trực tiếp
+                    # Download image qua Chrome (Chrome tải nhanh hơn requests)
                     dl_start = time.time()
-                    self.log(f"→ Downloading image (URL has signature)...")
+                    self.log(f"→ Downloading via Chrome...")
                     downloaded = False
 
-                    # SIMPLE: Tải trực tiếp bằng requests - URL đã có auth
-                    try:
-                        req_start = time.time()
-                        # Không proxy, không headers phức tạp - URL có signature rồi
-                        resp = requests.get(img.url, timeout=30)
-                        req_time = time.time() - req_start
+                    # Dùng Chrome fetch API - Chrome đã có session, tải nhanh
+                    if self.driver and not downloaded:
+                        try:
+                            # Escape URL cho JavaScript
+                            safe_url = img.url.replace("'", "\\'").replace('"', '\\"')
+                            js_code = f'''
+                            (async () => {{
+                                try {{
+                                    const resp = await fetch("{safe_url}");
+                                    if (!resp.ok) return {{ error: "HTTP " + resp.status }};
+                                    const blob = await resp.blob();
+                                    return new Promise((resolve) => {{
+                                        const reader = new FileReader();
+                                        reader.onloadend = () => resolve({{
+                                            base64: reader.result.split(',')[1],
+                                            size: blob.size
+                                        }});
+                                        reader.readAsDataURL(blob);
+                                    }});
+                                }} catch(e) {{
+                                    return {{ error: e.toString() }};
+                                }}
+                            }})()
+                            '''
+                            result = self.driver.run_js(js_code)
+                            chrome_time = time.time() - dl_start
 
-                        if resp.status_code == 200:
-                            img_path = save_dir / f"{fname}.png"
-                            img_path.write_bytes(resp.content)
-                            img.local_path = img_path
-                            img.base64_data = base64.b64encode(resp.content).decode()
-                            self.log(f"✓ Downloaded: {img_path.name} ({len(resp.content)} bytes, {req_time:.2f}s)")
-                            downloaded = True
-                        else:
-                            self.log(f"   [DEBUG] Direct download failed: HTTP {resp.status_code}")
-                    except requests.exceptions.Timeout:
-                        self.log(f"✗ Download timeout after 30s", "WARN")
-                    except Exception as e:
-                        self.log(f"✗ Download error: {e}", "WARN")
+                            if result and result.get('base64'):
+                                img.base64_data = result['base64']
+                                img_path = save_dir / f"{fname}.png"
+                                img_path.write_bytes(base64.b64decode(img.base64_data))
+                                img.local_path = img_path
+                                size = result.get('size', len(img.base64_data))
+                                self.log(f"✓ Downloaded: {img_path.name} ({size} bytes, {chrome_time:.2f}s)")
+                                downloaded = True
+                            elif result and result.get('error'):
+                                self.log(f"   [DEBUG] Chrome fetch error: {result['error']}")
+                        except Exception as e:
+                            self.log(f"   [DEBUG] Chrome fetch exception: {e}")
+
+                    # Fallback to requests nếu Chrome fail
+                    if not downloaded:
+                        try:
+                            self.log(f"   Fallback to requests...")
+                            resp = requests.get(img.url, timeout=120)
+                            req_time = time.time() - dl_start
+                            if resp.status_code == 200:
+                                img_path = save_dir / f"{fname}.png"
+                                img_path.write_bytes(resp.content)
+                                img.local_path = img_path
+                                img.base64_data = base64.b64encode(resp.content).decode()
+                                self.log(f"✓ Downloaded: {img_path.name} ({len(resp.content)} bytes, {req_time:.2f}s)")
+                                downloaded = True
+                        except Exception as e:
+                            self.log(f"✗ Download failed: {e}", "WARN")
 
         # F5 refresh sau mỗi ảnh thành công để tránh 403 cho prompt tiếp theo
         try:
