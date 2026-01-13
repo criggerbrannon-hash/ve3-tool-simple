@@ -1291,6 +1291,9 @@ class DrissionFlowAPI:
         Returns:
             True nếu thành công
         """
+        # Lưu skip_mode_selection để dùng khi restart_chrome()
+        self._skip_mode_selection = skip_mode_selection
+
         if not DRISSION_AVAILABLE:
             self.log("DrissionPage không được cài đặt! pip install DrissionPage", "ERROR")
             return False
@@ -4897,7 +4900,13 @@ class DrissionFlowAPI:
         if saved_project_url:
             self.log(f"  → Reusing project: {saved_project_url[:50]}...")
 
-        if self.setup(project_url=saved_project_url):
+        # GIỮ NGUYÊN skip_mode_selection từ lần setup đầu tiên
+        # Nếu Chrome 2 (video) đã skip mode selection, thì khi restart cũng skip
+        skip_mode = getattr(self, '_skip_mode_selection', False)
+        if skip_mode:
+            self.log("  → Skip mode selection (video mode đã được set)")
+
+        if self.setup(project_url=saved_project_url, skip_mode_selection=skip_mode):
             self.log("✓ Chrome restarted thành công!")
             return True
         else:
