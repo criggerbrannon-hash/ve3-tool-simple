@@ -266,9 +266,9 @@ def process_project_video(code: str, video_count: int = -1, callback=None) -> bo
             log(f"     Prompt: {video_prompt[:50]}...")
 
             try:
-                # Use T2V MODE: Ở T2V mode, interceptor convert T2V→I2V với media_id
-                # T2V mode + fresh reCAPTCHA + referenceImages = video từ ảnh
-                ok, result_path, error = api.generate_video_t2v_mode(
+                # Use MODIFY MODE: Ở mode "Tạo video từ các thành phần" (I2V trên UI)
+                # Chrome gửi I2V request với fresh reCAPTCHA, interceptor thêm referenceImages
+                ok, result_path, error = api.generate_video_modify_mode(
                     media_id=media_id,
                     prompt=video_prompt,
                     save_path=mp4_path
