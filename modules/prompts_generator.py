@@ -5897,36 +5897,39 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             srt_end = scene.get("srt_end", "00:00:05,000")
             duration = scene.get("duration_seconds", 5)
 
-            # TẤT CẢ scenes đều có ALL references - Flow sẽ tự chọn
-            all_char_ids = ["nvc"] + [c["id"] for c in flashback_chars]
-            characters_used = json.dumps(all_char_ids)
-            location_used = "loc_01"  # Default
-            reference_files = json.dumps(all_refs)
-
             if is_narrator_scene(scene_id):
                 # === NARRATOR SCENE (30%) ===
-                # Ghi chú: Đây là scene narrator, nhưng không ghi vào prompt
+                # Chỉ dùng người kể (nvc) + bối cảnh cố định (loc_narrator)
                 narrator_count += 1
                 angle_idx = narrator_count % len(narrator_angles)
                 shot_type, lens, framing = narrator_angles[angle_idx]
 
-                # Prompt sạch - không có tag [FALLBACK-...]
+                # References CỐ ĐỊNH cho Narrator - an toàn, nhất quán
+                characters_used = '["nvc"]'
+                location_used = "loc_narrator"
+                reference_files = '["nvc.png", "loc_narrator.png"]'
+
                 fallback_prompt = (
                     f"{shot_type}, {lens}, {framing}. "
                     f"{CHARACTER_LOCK}, {COSTUME_LOCK}, "
                     f"thoughtful contemplative expression, gentle knowing look. "
                     f"{LOCATION_LOCK}. "
                     f"Photorealistic, 4K cinematic quality, warm color grading. "
-                    f"({all_refs_str})"
+                    f"(nvc.png, loc_narrator.png)"
                 )
 
             else:
                 # === FLASHBACK SCENE (70%) ===
+                # Dùng TẤT CẢ references - Flow tự chọn phù hợp với SRT content
                 flashback_count += 1
                 angle_idx = flashback_count % len(flashback_angles)
                 shot_type, lens, framing = flashback_angles[angle_idx]
 
-                # Prompt sạch - có SRT content + ALL references
+                all_char_ids = ["nvc"] + [c["id"] for c in flashback_chars]
+                characters_used = json.dumps(all_char_ids)
+                location_used = "loc_01"
+                reference_files = json.dumps(all_refs)
+
                 fallback_prompt = (
                     f"{shot_type}, {lens}, {framing}. "
                     f"Visual illustration for: \"{srt_text}\". "
