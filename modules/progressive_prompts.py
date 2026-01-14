@@ -599,6 +599,7 @@ Rules:
 2. Group SRT entries that belong to the same visual moment
 3. Assign appropriate characters and locations to each scene
 4. Create a visual_moment description (what the viewer sees)
+5. IMPORTANT: Use exact character IDs from above (nvc, nv1, nv2...) and location IDs (loc_narrator, loc_01, loc_02...)
 
 Return JSON only:
 {{
@@ -611,8 +612,8 @@ Return JSON only:
             "duration": 5.0,
             "srt_text": "combined text from SRT entries",
             "visual_moment": "what the viewer sees in this scene",
-            "characters_used": "char_id1, char_id2",
-            "location_used": "loc_id",
+            "characters_used": "nvc, nv1",
+            "location_used": "loc_01",
             "camera": "shot type and movement",
             "lighting": "lighting description"
         }}
