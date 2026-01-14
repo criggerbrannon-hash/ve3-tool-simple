@@ -330,25 +330,37 @@ For each character, provide:
 1. portrait_prompt: Full description for generating a reference portrait (white background, portrait style)
 2. character_lock: Short 10-15 word description to use in scene prompts (for consistency)
 
-IMPORTANT: Character IDs MUST follow this format:
-- "nvc" for the main narrator/protagonist
-- "nv1", "nv2", "nv3"... for other characters (numbered)
+CRITICAL - ID FORMAT (DO NOT USE CHARACTER NAMES AS IDs):
+- First/main character: id = "nvc" (narrator/protagonist)
+- Second character: id = "nv1"
+- Third character: id = "nv2"
+- Fourth character: id = "nv3"
+- And so on... (nv4, nv5, nv6...)
+- Store the actual character name in the "name" field, NOT in id
 
 Return JSON only:
 {{
     "characters": [
         {{
             "id": "nvc",
-            "name": "Character Name",
+            "name": "Janelle",
             "role": "narrator",
-            "portrait_prompt": "detailed portrait description for image generation, white background",
-            "character_lock": "short description for scene prompts (10-15 words)",
-            "vietnamese_description": "Mô tả tiếng Việt"
+            "portrait_prompt": "35-year-old African American woman, warm brown eyes, natural curly hair...",
+            "character_lock": "35-year-old black woman with curly hair and warm smile",
+            "vietnamese_description": "Phụ nữ da màu 35 tuổi"
         }},
         {{
             "id": "nv1",
-            "name": "Another Character",
+            "name": "Tommy",
             "role": "supporting",
+            "portrait_prompt": "8-year-old boy with bright curious eyes...",
+            "character_lock": "young boy with curious expression",
+            "vietnamese_description": "Cậu bé 8 tuổi"
+        }},
+        {{
+            "id": "nv2",
+            "name": "Karen",
+            "role": "antagonist",
             "portrait_prompt": "...",
             "character_lock": "...",
             "vietnamese_description": "..."
@@ -496,22 +508,25 @@ Return JSON only:
             self._log("  ERROR: Could not parse locations!", "ERROR")
             return StepResult("create_locations", StepStatus.FAILED, "JSON parse failed")
 
-        # Save to Excel
+        # Save to Excel - LƯU VÀO CHARACTERS SHEET (không phải locations)
+        # Vì smart_engine chỉ đọc characters sheet để tạo ảnh reference
         try:
             for loc_data in data["locations"]:
                 loc_id = loc_data.get("id", "")
-                loc = Location(
+                # Tạo Character object với role="location" → vào characters sheet
+                char = Character(
                     id=loc_id,
                     name=loc_data.get("name", ""),
+                    role="location",  # Đánh dấu là location
                     english_prompt=loc_data.get("location_prompt", ""),
-                    location_lock=loc_data.get("location_lock", ""),
-                    lighting_default=loc_data.get("lighting_default", ""),
-                    image_file=f"{loc_id}.png",  # Gán image_file = {id}.png
+                    character_lock=loc_data.get("location_lock", ""),
+                    vietnamese_prompt=loc_data.get("lighting_default", ""),
+                    image_file=f"{loc_id}.png",
                 )
-                workbook.add_location(loc)
+                workbook.add_character(char)
 
             workbook.save()
-            self._log(f"  -> Saved {len(data['locations'])} locations to Excel")
+            self._log(f"  -> Saved {len(data['locations'])} locations to characters sheet")
             for loc in data["locations"][:3]:
                 self._log(f"     - {loc.get('name', 'N/A')}")
 
