@@ -6275,14 +6275,68 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             self.logger.info(f"[FALLBACK] ✓ {fl['id']}: {fl['name']}")
         self.logger.info(f"[FALLBACK] ✓ Tổng {len(flashback_locs)} locations từ phân tích SRT")
 
-        # === BƯỚC 6: Nhóm SRT thành scenes ===
-        scenes_data = group_srt_into_scenes(
-            srt_entries,
+        # === BƯỚC 6: Nhóm SRT thành scenes (10 phút đầu chi tiết, sau đó gom 1 phút/scene) ===
+        # Quy tắc:
+        # - 10 phút đầu (600s): Nhóm bình thường (15-25s/scene) → tạo ảnh + video
+        # - Sau 10 phút: Gom ~60s = 1 scene → chỉ tạo ảnh, không video
+
+        CUTOFF_SECONDS = 600  # 10 phút
+        AFTER_CUTOFF_DURATION = 60  # 1 phút/scene sau 10 phút
+
+        # Chia SRT entries thành 2 phần
+        entries_first_10min = []
+        entries_after_10min = []
+
+        for entry in srt_entries:
+            # Tính thời gian bắt đầu của entry (giây từ đầu)
+            if hasattr(entry, 'start_time'):
+                start_sec = entry.start_time.total_seconds()
+            elif isinstance(entry, dict):
+                start_sec = entry.get('start_time', 0)
+                if hasattr(start_sec, 'total_seconds'):
+                    start_sec = start_sec.total_seconds()
+            else:
+                start_sec = 0
+
+            if start_sec < CUTOFF_SECONDS:
+                entries_first_10min.append(entry)
+            else:
+                entries_after_10min.append(entry)
+
+        self.logger.info(f"[FALLBACK] SRT split: {len(entries_first_10min)} entries trong 10 phút đầu, "
+                        f"{len(entries_after_10min)} entries sau 10 phút")
+
+        # Nhóm 10 phút đầu: bình thường (15-25s/scene)
+        scenes_first = group_srt_into_scenes(
+            entries_first_10min,
             min_duration=self.min_scene_duration,
             max_duration=self.max_scene_duration
         )
+
+        # Đánh dấu scenes 10 phút đầu = tạo cả ảnh + video
+        for scene in scenes_first:
+            scene["create_video"] = True
+
+        # Nhóm sau 10 phút: 60s/scene
+        scenes_after = group_srt_into_scenes(
+            entries_after_10min,
+            min_duration=50,  # Tối thiểu 50s
+            max_duration=70   # Tối đa 70s → ~1 phút/scene
+        )
+
+        # Đánh dấu scenes sau 10 phút = chỉ ảnh, không video
+        # Cập nhật scene_id để tiếp nối
+        for i, scene in enumerate(scenes_after):
+            scene["scene_id"] = len(scenes_first) + i + 1
+            scene["create_video"] = False  # Không tạo video
+
+        # Gộp tất cả scenes
+        scenes_data = scenes_first + scenes_after
         total_scenes = len(scenes_data)
-        self.logger.info(f"[FALLBACK] ✓ Chia thành {total_scenes} scenes từ SRT")
+        scenes_with_video = len(scenes_first)
+
+        self.logger.info(f"[FALLBACK] ✓ Tổng {total_scenes} scenes: {scenes_with_video} có video (10 phút đầu), "
+                        f"{len(scenes_after)} chỉ ảnh")
 
         # === BƯỚC 7: Xác định scenes nào là Narrator (30%) ===
         # Logic: Mỗi 10 scenes có 3 Narrator ở vị trí 1, 4, 7 (tức index 0, 3, 6)
@@ -6471,6 +6525,9 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 )
 
             # Tạo Scene object
+            # video_type: "i2v" nếu create_video=True, "none" nếu False (scenes sau 10 phút)
+            video_type = "i2v" if scene.get("create_video", True) else "none"
+
             scene_obj = Scene(
                 scene_id=scene_id,
                 srt_start=srt_start,
@@ -6479,12 +6536,13 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 planned_duration=duration,
                 srt_text=srt_text,
                 img_prompt=fallback_prompt,
-                video_prompt=fallback_prompt,
+                video_prompt=fallback_prompt if video_type == "i2v" else "",  # Không có video prompt nếu không tạo video
                 status_img="pending",
-                status_vid="pending",
+                status_vid="pending" if video_type == "i2v" else "skip",  # skip video cho scenes sau 10 phút
                 characters_used=characters_used,
                 location_used=location_used,
-                reference_files=reference_files
+                reference_files=reference_files,
+                video_type=video_type
             )
             workbook.add_scene(scene_obj)
 
@@ -6512,9 +6570,10 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
         flashback_pct = round(flashback_count / total_scenes * 100) if total_scenes > 0 else 0
 
         self.logger.info(f"[FALLBACK] ✓ Excel hoàn thành:")
-        self.logger.info(f"[FALLBACK]   - Narrator: {narrator_count} scenes ({narrator_pct}%) - fixed character/location")
-        self.logger.info(f"[FALLBACK]   - Flashback: {flashback_count} scenes ({flashback_pct}%) - có SRT content")
-        self.logger.info(f"[FALLBACK]   - ALL scenes có {len(all_refs)} references (Flow tự chọn)")
-        self.logger.info(f"[FALLBACK]   - Duration từ SRT timestamps (không mặc định 5s)")
+        self.logger.info(f"[FALLBACK]   - Tổng: {total_scenes} scenes")
+        self.logger.info(f"[FALLBACK]   - 10 phút đầu: {scenes_with_video} scenes (ảnh + video)")
+        self.logger.info(f"[FALLBACK]   - Sau 10 phút: {len(scenes_after)} scenes (chỉ ảnh, không video)")
+        self.logger.info(f"[FALLBACK]   - Narrator: {narrator_count} ({narrator_pct}%) | Flashback: {flashback_count} ({flashback_pct}%)")
+        self.logger.info(f"[FALLBACK]   - References: {len(all_refs)} (chars + locs)")
 
         return True

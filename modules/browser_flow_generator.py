@@ -2840,8 +2840,12 @@ class BrowserFlowGenerator:
             # Chi tao video cho scenes da co anh
             if not scene.img_path:
                 continue
-            # Bo qua scenes da tao video
-            if scene.status_vid == "done":
+            # Bo qua scenes da tao video hoac duoc danh dau skip
+            if scene.status_vid in ("done", "skip"):
+                self.stats["skipped"] += 1
+                continue
+            # Bo qua scenes co video_type = "none" (fallback scenes sau 10 phút)
+            if getattr(scene, 'video_type', 'i2v') == "none":
                 self.stats["skipped"] += 1
                 continue
             # Lay video_prompt hoac img_prompt
@@ -3009,10 +3013,12 @@ class BrowserFlowGenerator:
 
             video_path = getattr(scene, 'video_path', '') or ''
             status_vid = getattr(scene, 'status_vid', '') or ''
+            video_type = getattr(scene, 'video_type', 'i2v') or 'i2v'
 
             if not media_id:
                 continue
-            if video_path or status_vid == 'done':
+            # Skip scenes đã done, được đánh dấu skip, hoặc video_type = "none"
+            if video_path or status_vid in ('done', 'skip') or video_type == 'none':
                 continue
 
             video_prompt = getattr(scene, 'video_prompt', '') or 'Subtle cinematic motion'
@@ -4250,10 +4256,12 @@ class BrowserFlowGenerator:
 
                         video_path = getattr(scene, 'video_path', '') or ''
                         status_vid = getattr(scene, 'status_vid', '') or ''
+                        video_type = getattr(scene, 'video_type', 'i2v') or 'i2v'
 
                         if not media_id:
                             scenes_without_media_id.append(scene_id)
-                        elif not video_path and status_vid != 'done':
+                        # Skip nếu đã có video, status done/skip, hoặc video_type = "none"
+                        elif not video_path and status_vid not in ('done', 'skip') and video_type != 'none':
                             video_prompt = getattr(scene, 'video_prompt', '') or 'Subtle cinematic motion'
                             scenes_for_video.append({
                                 'scene_id': scene_id,
