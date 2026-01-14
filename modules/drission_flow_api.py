@@ -2974,36 +2974,12 @@ class DrissionFlowAPI:
                     else:
                         return False, [], "Không restart được Chrome sau 403"
 
-                # === TIMEOUT ERROR: Tương tự 403, cần reset Chrome và đổi proxy ===
+                # === TIMEOUT ERROR: Có thể do prompt vi phạm policy → SKIP sang prompt khác ===
                 if "timeout" in error.lower():
-                    self.log(f"⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
-
-                    # Kill Chrome và đổi proxy
-                    self._kill_chrome()
-                    self.close()
-
-                    # === ROTATING ENDPOINT MODE ===
-                    if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
-                            self.log(f"  → 🎲 Random IP: Restart Chrome để lấy IP mới...")
-                        else:
-                            # Sticky Session mode: Tăng session ID
-                            self._rotating_session_id += 1
-                            if self._rotating_session_id > self._session_range_end:
-                                self._rotating_session_id = self._session_range_start
-                                self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
-                            else:
-                                self.log(f"  → Sticky: Đổi sang session {self._rotating_session_id}")
-                            _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
-
-                        if attempt < max_retries - 1:
-                            time.sleep(3)
-                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
-                                continue
-                            else:
-                                return False, [], "Không restart được Chrome sau timeout"
-                        else:
-                            return False, [], error
+                    self.log(f"⚠️ Timeout - có thể do policy violation → SKIP prompt này", "WARN")
+                    self.log(f"  → Chuyển sang prompt khác, RETRY PHASE sẽ thử lại sau")
+                    # KHÔNG retry, return ngay để chuyển sang prompt khác
+                    return False, [], f"Timeout (có thể policy) - skip"
 
                     # === DIRECT PROXY LIST MODE ===
                     if self._use_webshare and self._webshare_proxy:
