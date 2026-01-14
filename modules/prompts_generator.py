@@ -5735,6 +5735,231 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             self.logger.error(traceback.format_exc())
             return False
 
+    def _analyze_srt_for_characters(self, srt_entries: List) -> dict:
+        """
+        Phân tích nội dung SRT để đoán nhân vật và bối cảnh.
+
+        Returns:
+            dict với keys: narrator_type, characters, locations, theme
+        """
+        import re
+
+        # Gộp tất cả text từ SRT
+        all_text = " ".join([
+            entry.get("text", "") if isinstance(entry, dict) else str(entry)
+            for entry in srt_entries
+        ]).lower()
+
+        result = {
+            "narrator_gender": "neutral",  # male, female, neutral
+            "narrator_age": "adult",       # child, young, adult, elderly
+            "characters": [],              # List of detected character types
+            "locations": [],               # List of detected location types
+            "theme": "general",            # romance, action, family, horror, etc.
+            "ethnicity": "asian"           # asian, western, african, neutral
+        }
+
+        # === PHÁT HIỆN GIỚI TÍNH NGƯỜI KỂ ===
+        male_vi = ["tôi là đàn ông", "anh ấy", "ông ấy", "chú ấy", "bố tôi", "cha tôi", "con trai"]
+        female_vi = ["tôi là phụ nữ", "cô ấy", "bà ấy", "dì ấy", "mẹ tôi", "con gái"]
+        male_en = ["i am a man", "he said", "his father", "my father", "the boy", "the man"]
+        female_en = ["i am a woman", "she said", "her mother", "my mother", "the girl", "the woman"]
+
+        male_count = sum(1 for k in male_vi + male_en if k in all_text)
+        female_count = sum(1 for k in female_vi + female_en if k in all_text)
+
+        if male_count > female_count + 2:
+            result["narrator_gender"] = "male"
+        elif female_count > male_count + 2:
+            result["narrator_gender"] = "female"
+
+        # === PHÁT HIỆN TUỔI ===
+        child_kw = ["con nít", "em bé", "trẻ con", "child", "kid", "baby", "tuổi thơ", "childhood"]
+        elderly_kw = ["ông bà", "già", "elderly", "grandfather", "grandmother", "old age", "về già"]
+        young_kw = ["thanh niên", "trẻ tuổi", "young", "teenager", "youth", "tuổi trẻ"]
+
+        if any(k in all_text for k in child_kw):
+            result["narrator_age"] = "child"
+        elif any(k in all_text for k in elderly_kw):
+            result["narrator_age"] = "elderly"
+        elif any(k in all_text for k in young_kw):
+            result["narrator_age"] = "young"
+
+        # === PHÁT HIỆN NHÂN VẬT ===
+        char_patterns = [
+            # (pattern keywords, character type, gender, age)
+            (["mẹ", "mother", "mom", "má"], "Mother Figure", "female", "adult"),
+            (["bố", "father", "dad", "ba", "cha"], "Father Figure", "male", "adult"),
+            (["con trai", "son", "cậu bé", "boy"], "Son/Boy", "male", "young"),
+            (["con gái", "daughter", "cô bé", "girl"], "Daughter/Girl", "female", "young"),
+            (["ông", "grandfather", "ông nội", "ông ngoại"], "Grandfather", "male", "elderly"),
+            (["bà", "grandmother", "bà nội", "bà ngoại"], "Grandmother", "female", "elderly"),
+            (["vợ", "wife", "người yêu", "girlfriend", "bạn gái"], "Wife/Lover", "female", "adult"),
+            (["chồng", "husband", "boyfriend", "bạn trai"], "Husband/Lover", "male", "adult"),
+            (["bạn", "friend", "đồng nghiệp", "colleague"], "Friend", "neutral", "adult"),
+            (["thầy", "teacher", "giáo viên", "professor"], "Teacher", "neutral", "adult"),
+            (["bác sĩ", "doctor", "y tá", "nurse"], "Doctor", "neutral", "adult"),
+            (["em bé", "baby", "infant", "trẻ sơ sinh"], "Baby", "neutral", "child"),
+        ]
+
+        detected_chars = []
+        for keywords, char_type, gender, age in char_patterns:
+            if any(k in all_text for k in keywords):
+                detected_chars.append({
+                    "type": char_type,
+                    "gender": gender,
+                    "age": age
+                })
+        result["characters"] = detected_chars[:4]  # Max 4 characters
+
+        # === PHÁT HIỆN BỐI CẢNH ===
+        loc_patterns = [
+            (["nhà", "home", "phòng", "room", "căn hộ", "apartment"], "Home Interior"),
+            (["trường", "school", "lớp học", "classroom"], "School"),
+            (["bệnh viện", "hospital", "phòng khám", "clinic"], "Hospital"),
+            (["công viên", "park", "vườn", "garden"], "Park/Garden"),
+            (["biển", "beach", "ocean", "sea", "bãi biển"], "Beach/Ocean"),
+            (["núi", "mountain", "đồi", "hill"], "Mountain"),
+            (["thành phố", "city", "downtown", "urban"], "City"),
+            (["làng", "village", "quê", "countryside", "nông thôn"], "Village/Countryside"),
+            (["nhà hàng", "restaurant", "quán", "cafe", "coffee"], "Restaurant/Cafe"),
+            (["văn phòng", "office", "công ty", "company"], "Office"),
+            (["đêm", "night", "tối", "dark"], "Night Scene"),
+            (["mưa", "rain", "storm", "bão"], "Rainy Scene"),
+        ]
+
+        detected_locs = []
+        for keywords, loc_type in loc_patterns:
+            if any(k in all_text for k in keywords):
+                detected_locs.append(loc_type)
+        result["locations"] = detected_locs[:5]  # Max 5 locations
+
+        # === PHÁT HIỆN CHỦ ĐỀ ===
+        theme_patterns = [
+            (["tình yêu", "love", "yêu", "hôn", "kiss", "trái tim", "heart"], "romance"),
+            (["gia đình", "family", "bố mẹ", "con cái", "parents", "children"], "family"),
+            (["chiến tranh", "war", "battle", "soldier", "lính"], "war"),
+            (["ma", "ghost", "horror", "sợ", "scary", "kinh dị"], "horror"),
+            (["hài", "comedy", "funny", "laugh", "cười"], "comedy"),
+            (["phiêu lưu", "adventure", "journey", "travel", "du lịch"], "adventure"),
+            (["thành công", "success", "business", "kinh doanh", "công việc"], "business"),
+        ]
+
+        for keywords, theme in theme_patterns:
+            if any(k in all_text for k in keywords):
+                result["theme"] = theme
+                break
+
+        # === PHÁT HIỆN DÂN TỘC/VĂN HÓA ===
+        western_kw = ["america", "europe", "london", "paris", "new york", "western"]
+        african_kw = ["africa", "african"]
+
+        if any(k in all_text for k in western_kw):
+            result["ethnicity"] = "western"
+        elif any(k in all_text for k in african_kw):
+            result["ethnicity"] = "african"
+
+        return result
+
+    def _build_character_prompt(self, char_info: dict, ethnicity: str) -> str:
+        """Tạo prompt cho nhân vật dựa trên thông tin phân tích."""
+        gender = char_info.get("gender", "neutral")
+        age = char_info.get("age", "adult")
+        char_type = char_info.get("type", "Person")
+
+        # Base ethnicity
+        eth_map = {
+            "asian": "Asian",
+            "western": "Caucasian",
+            "african": "African",
+            "neutral": ""
+        }
+        eth_str = eth_map.get(ethnicity, "")
+
+        # Gender
+        gender_map = {
+            "male": "man",
+            "female": "woman",
+            "neutral": "person"
+        }
+        gender_str = gender_map.get(gender, "person")
+
+        # Age
+        age_map = {
+            "child": "young child",
+            "young": "young adult in their 20s",
+            "adult": "adult in their 30s-40s",
+            "elderly": "elderly person in their 60s-70s"
+        }
+        age_str = age_map.get(age, "adult")
+
+        # Build prompt
+        prompt = f"{age_str} {eth_str} {gender_str}".strip()
+        prompt = prompt.replace("  ", " ")
+
+        # Add character-specific details
+        type_details = {
+            "Mother Figure": "warm maternal expression, caring demeanor, comfortable home attire",
+            "Father Figure": "strong protective presence, kind eyes, casual smart clothing",
+            "Son/Boy": "energetic expression, casual youthful clothing, bright eyes",
+            "Daughter/Girl": "sweet expression, youthful clothing, innocent charm",
+            "Grandfather": "wise weathered face, gentle smile, traditional comfortable clothing",
+            "Grandmother": "warm nurturing face, silver hair, traditional comfortable clothing",
+            "Wife/Lover": "loving expression, elegant casual wear, graceful demeanor",
+            "Husband/Lover": "devoted expression, smart casual clothing, strong presence",
+            "Friend": "friendly open expression, casual modern clothing, approachable demeanor",
+            "Teacher": "intelligent expression, professional attire, authoritative but kind",
+            "Doctor": "professional appearance, white coat or medical attire, competent demeanor",
+            "Baby": "innocent cherubic face, soft features, baby clothing",
+        }
+
+        details = type_details.get(char_type, "expressive face, appropriate attire for the scene")
+
+        return f"{prompt}, {details}, photorealistic portrait, cinematic lighting, 8K quality"
+
+    def _build_narrator_from_analysis(self, analysis: dict) -> tuple:
+        """Tạo CHARACTER_LOCK và COSTUME_LOCK cho narrator dựa trên phân tích."""
+        gender = analysis.get("narrator_gender", "neutral")
+        age = analysis.get("narrator_age", "adult")
+        ethnicity = analysis.get("ethnicity", "asian")
+
+        eth_map = {"asian": "Asian", "western": "Caucasian", "african": "African", "neutral": ""}
+        eth_str = eth_map.get(ethnicity, "Asian")
+
+        # Build character description based on analysis
+        if gender == "male":
+            if age == "elderly":
+                char_lock = f"elderly {eth_str} man in his 60s, silver-grey hair, wise weathered face, gentle tired eyes, dignified expression"
+            elif age == "young":
+                char_lock = f"young {eth_str} man in his 20s, youthful face, expressive eyes, slight smile, energetic yet thoughtful"
+            else:
+                char_lock = f"middle-aged {eth_str} man in his 30s-40s, short dark hair, gentle tired eyes, slight stubble, warm complexion"
+        elif gender == "female":
+            if age == "elderly":
+                char_lock = f"elderly {eth_str} woman in her 60s, silver hair, warm weathered face, kind eyes, graceful aging"
+            elif age == "young":
+                char_lock = f"young {eth_str} woman in her 20s, expressive face, gentle features, bright eyes, youthful glow"
+            else:
+                char_lock = f"middle-aged {eth_str} woman in her 30s-40s, elegant features, warm eyes, gentle expression, graceful demeanor"
+        else:
+            # Neutral - default to contemplative adult
+            char_lock = f"adult {eth_str} person, contemplative expression, gentle eyes, thoughtful demeanor, timeless appearance"
+
+        # Costume based on theme
+        theme = analysis.get("theme", "general")
+        costume_map = {
+            "romance": "wearing elegant casual attire, soft colors, romantic style",
+            "family": "wearing comfortable home clothes, warm sweater, relaxed appearance",
+            "war": "wearing simple practical clothing, muted colors, weathered appearance",
+            "horror": "wearing dark clothing, slightly disheveled, tense posture",
+            "business": "wearing smart business casual, neat appearance, professional",
+            "adventure": "wearing practical outdoor clothing, ready for action",
+            "general": "wearing comfortable dark blue knit sweater over white collared shirt, casual but neat"
+        }
+        costume_lock = costume_map.get(theme, costume_map["general"])
+
+        return char_lock, costume_lock
+
     def _generate_fallback_only(
         self,
         srt_entries: List,
@@ -5746,13 +5971,11 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
         """
         Tạo Excel với fallback prompts kiểu "Narrator + Flashback".
 
+        PHÂN TÍCH SRT để tạo nhân vật phù hợp với kịch bản.
+
         Ratio: 30% Narrator, 70% Flashback
         - Narrator: Nhân vật kể chuyện tại location cố định (an toàn, chỉ đổi góc máy)
         - Flashback: Minh họa nội dung SRT + ALL references (Flow tự chọn)
-
-        Ví dụ 10 scenes:
-        - Scene 1, 4, 7: Narrator (3 scenes = 30%)
-        - Scene 2, 3, 5, 6, 8, 9, 10: Flashback (7 scenes = 70%)
         """
         from .excel_manager import Scene, Character as CharObj
         from .utils import group_srt_into_scenes
@@ -5760,15 +5983,14 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
 
         self.logger.info("[FALLBACK] Bắt đầu tạo Excel (30% Narrator + 70% Flashback)...")
 
-        # === BƯỚC 1: Định nghĩa LOCK cố định cho Narrator ===
-        CHARACTER_LOCK = (
-            "35-year-old Asian man with short black hair, gentle tired eyes, "
-            "slight stubble on chin, warm complexion, expressive face showing life experience"
-        )
-        COSTUME_LOCK = (
-            "wearing a comfortable dark blue knit sweater over white collared shirt, "
-            "sleeves slightly rolled up, casual but neat appearance"
-        )
+        # === BƯỚC 0: PHÂN TÍCH SRT ĐỂ ĐOÁN NHÂN VẬT ===
+        analysis = self._analyze_srt_for_characters(srt_entries)
+        self.logger.info(f"[FALLBACK] Phân tích SRT: narrator={analysis['narrator_gender']}/{analysis['narrator_age']}, "
+                        f"theme={analysis['theme']}, chars={len(analysis['characters'])}, locs={len(analysis['locations'])}")
+
+        # === BƯỚC 1: Định nghĩa LOCK cho Narrator (dựa trên phân tích) ===
+        CHARACTER_LOCK, COSTUME_LOCK = self._build_narrator_from_analysis(analysis)
+
         LOCATION_LOCK = (
             "cozy living room corner, warm soft lamp light from beside, "
             "wooden bookshelf with old books in background, comfortable armchair, "
@@ -5780,28 +6002,48 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             id="nvc",
             name="Narrator",
             role="narrator",
-            vietnamese_prompt="Người kể chuyện hồi tưởng",
+            vietnamese_prompt="Người kể chuyện",
             english_prompt=f"{CHARACTER_LOCK}, {COSTUME_LOCK}",
             character_lock=CHARACTER_LOCK,
             image_file="nvc.png",
             status="pending"
         )
         workbook.add_character(default_char)
-        self.logger.info("[FALLBACK] ✓ Đã tạo nhân vật narrator")
+        self.logger.info(f"[FALLBACK] ✓ Narrator: {analysis['narrator_gender']}, {analysis['narrator_age']}")
 
-        # === BƯỚC 3: Tạo thêm các nhân vật placeholder cho Flashback ===
-        # ID phải bắt đầu bằng "nv" để smart_engine nhận diện và lưu vào nv/
-        # Tổng 4 nhân vật: nvc + nv1, nv2, nv3
-        flashback_chars = [
-            {"id": "nv1", "name": "Main Character", "role": "protagonist",
-             "english_prompt": "Young adult Asian man, expressive face, casual modern clothing, confident posture, photorealistic, 8K quality"},
-            {"id": "nv2", "name": "Female Lead", "role": "supporting",
-             "english_prompt": "Young Asian woman, gentle features, elegant casual wear, warm smile, photorealistic, 8K quality"},
-            {"id": "nv3", "name": "Elder Figure", "role": "supporting",
-             "english_prompt": "Middle-aged Asian person, wise appearance, traditional yet modern attire, dignified presence, photorealistic, 8K quality"},
+        # === BƯỚC 3: Tạo nhân vật dựa trên phân tích SRT ===
+        # ID phải bắt đầu bằng "nv" để smart_engine nhận diện
+        flashback_chars = []
+        ethnicity = analysis.get("ethnicity", "asian")
+
+        # Thêm nhân vật từ phân tích
+        for i, char_info in enumerate(analysis.get("characters", [])[:3]):
+            char_prompt = self._build_character_prompt(char_info, ethnicity)
+            flashback_chars.append({
+                "id": f"nv{i+1}",
+                "name": char_info.get("type", f"Character {i+1}"),
+                "role": "supporting",
+                "english_prompt": char_prompt
+            })
+
+        # Nếu không đủ 3 nhân vật, thêm generic characters
+        generic_chars = [
+            {"type": "Main Character", "gender": "neutral", "age": "adult"},
+            {"type": "Supporting Character", "gender": "neutral", "age": "adult"},
+            {"type": "Background Character", "gender": "neutral", "age": "adult"},
         ]
-        all_char_refs = ["nvc.png"]  # Start with narrator
+        while len(flashback_chars) < 3:
+            idx = len(flashback_chars)
+            char_info = generic_chars[idx]
+            char_prompt = self._build_character_prompt(char_info, ethnicity)
+            flashback_chars.append({
+                "id": f"nv{idx+1}",
+                "name": char_info.get("type", f"Character {idx+1}"),
+                "role": "supporting",
+                "english_prompt": char_prompt
+            })
 
+        all_char_refs = ["nvc.png"]
         for fc in flashback_chars:
             char_obj = Character(
                 id=fc["id"],
@@ -5814,8 +6056,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             )
             workbook.add_character(char_obj)
             all_char_refs.append(f"{fc['id']}.png")
-
-        self.logger.info(f"[FALLBACK] ✓ Đã tạo {len(flashback_chars) + 1} nhân vật")
+            self.logger.info(f"[FALLBACK] ✓ {fc['id']}: {fc['name']}")
 
         # === BƯỚC 4: Lưu backup_characters ===
         backup_chars = [{
@@ -5831,31 +6072,94 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             })
         workbook.save_backup_characters(backup_chars)
 
-        # === BƯỚC 5: Tạo locations cho Flashback ===
+        # === BƯỚC 5: Tạo locations dựa trên phân tích SRT ===
         # QUAN TRỌNG: Locations cũng add vào CHARACTERS sheet (như Character với role=location)
-        # Tất cả tham chiếu (nhân vật + bối cảnh) đều vào characters sheet, ảnh lưu vào nv/
-        # Tổng 6 locations: loc_narrator + loc_01 -> loc_05
 
+        # Bảng mapping location type -> prompt details
+        location_prompts = {
+            "Home Interior": {
+                "lock": "warm cozy home interior, comfortable furniture, family photos on wall, soft lighting",
+                "english_prompt": "Photorealistic home interior. Warm living room with comfortable furniture, family atmosphere, soft natural light through curtains. Intimate homey feeling, 8K cinematic quality."
+            },
+            "School": {
+                "lock": "school classroom or hallway, educational posters, desks and chairs, bright lighting",
+                "english_prompt": "Photorealistic school scene. Classroom with wooden desks, chalkboard, educational atmosphere, bright daylight through windows. Academic setting, 8K cinematic quality."
+            },
+            "Hospital": {
+                "lock": "hospital interior, clean white walls, medical equipment, sterile atmosphere",
+                "english_prompt": "Photorealistic hospital scene. Clean medical facility, soft fluorescent lighting, professional healthcare environment. Sterile yet caring atmosphere, 8K cinematic quality."
+            },
+            "Park/Garden": {
+                "lock": "beautiful park or garden, green trees, flowers, peaceful nature",
+                "english_prompt": "Photorealistic park scene. Lush green garden with blooming flowers, tall trees, dappled sunlight, peaceful atmosphere. Natural beauty, 8K cinematic quality."
+            },
+            "Beach/Ocean": {
+                "lock": "sandy beach, ocean waves, blue sky, tropical atmosphere",
+                "english_prompt": "Photorealistic beach scene. Golden sand, turquoise ocean waves, clear blue sky, warm sunlight. Serene coastal atmosphere, 8K cinematic quality."
+            },
+            "Mountain": {
+                "lock": "majestic mountains, dramatic peaks, vast landscape, epic scale",
+                "english_prompt": "Photorealistic mountain landscape. Towering peaks, dramatic clouds, vast wilderness, golden hour lighting. Awe-inspiring nature, 8K cinematic quality."
+            },
+            "City": {
+                "lock": "modern city street, tall buildings, urban life, dynamic atmosphere",
+                "english_prompt": "Photorealistic city scene. Modern urban street with glass buildings, busy sidewalks, dynamic city energy. Contemporary metropolitan atmosphere, 8K cinematic quality."
+            },
+            "Village/Countryside": {
+                "lock": "peaceful village, rice fields, traditional houses, rural atmosphere",
+                "english_prompt": "Photorealistic countryside scene. Peaceful village with traditional houses, green rice fields, misty morning atmosphere. Rural tranquility, 8K cinematic quality."
+            },
+            "Restaurant/Cafe": {
+                "lock": "cozy cafe or restaurant, warm interior, coffee aroma, social atmosphere",
+                "english_prompt": "Photorealistic cafe scene. Cozy interior with warm lighting, wooden tables, coffee cups, relaxed social atmosphere. Inviting ambiance, 8K cinematic quality."
+            },
+            "Office": {
+                "lock": "modern office space, computer desks, professional environment, corporate atmosphere",
+                "english_prompt": "Photorealistic office scene. Modern workspace with computers, glass partitions, professional lighting. Corporate business atmosphere, 8K cinematic quality."
+            },
+            "Night Scene": {
+                "lock": "nighttime urban scene, city lights, neon glow, mysterious atmosphere",
+                "english_prompt": "Photorealistic night scene. City at night with glowing streetlights, neon signs, wet reflective streets. Cinematic noir atmosphere, 8K quality."
+            },
+            "Rainy Scene": {
+                "lock": "rainy weather, wet streets, umbrellas, melancholic atmosphere",
+                "english_prompt": "Photorealistic rainy scene. Rain falling on city streets, reflections in puddles, people with umbrellas. Melancholic yet beautiful atmosphere, 8K cinematic quality."
+            },
+        }
+
+        # Tạo locations từ phân tích SRT
         flashback_locs = [
             {"id": "loc_narrator", "name": "Storytelling Room",
              "lock": LOCATION_LOCK,
-             "english_prompt": f"Photorealistic scene. {LOCATION_LOCK}. Cinematic lighting, 8K quality."},
-            {"id": "loc_01", "name": "Outdoor Nature",
-             "lock": "outdoor natural setting, daylight, trees and sky visible, peaceful atmosphere",
-             "english_prompt": "Photorealistic outdoor scene. Natural setting with lush trees, clear sky, golden hour sunlight filtering through leaves. Wide establishing shot, 8K cinematic quality."},
-            {"id": "loc_02", "name": "Cozy Interior",
-             "lock": "indoor living room, warm lighting, comfortable furniture, homey atmosphere",
-             "english_prompt": "Photorealistic indoor scene. Cozy living room with warm lamp light, comfortable sofa, soft textures. Intimate atmosphere, 8K cinematic quality."},
-            {"id": "loc_03", "name": "Urban Street",
-             "lock": "city street, modern buildings, urban life, dynamic atmosphere",
-             "english_prompt": "Photorealistic urban scene. Busy city street with modern architecture, people walking, vibrant urban energy. Dynamic street photography, 8K cinematic quality."},
-            {"id": "loc_04", "name": "Night Scene",
-             "lock": "nighttime setting, city lights, neon glow, mysterious atmosphere",
-             "english_prompt": "Photorealistic night scene. City at night with glowing lights, neon signs reflecting on wet streets, cinematic noir atmosphere. 8K quality."},
-            {"id": "loc_05", "name": "Dramatic Landscape",
-             "lock": "epic landscape, mountains or ocean, dramatic sky, vast open space",
-             "english_prompt": "Photorealistic epic landscape. Vast mountains or ocean horizon, dramatic clouds, golden or blue hour lighting. Awe-inspiring scale, 8K cinematic quality."},
+             "english_prompt": f"Photorealistic scene. {LOCATION_LOCK}. Cinematic lighting, 8K quality."}
         ]
+
+        detected_locs = analysis.get("locations", [])
+        for i, loc_type in enumerate(detected_locs[:5]):  # Max 5 detected locations
+            loc_data = location_prompts.get(loc_type, {
+                "lock": f"{loc_type.lower()}, atmospheric setting, cinematic mood",
+                "english_prompt": f"Photorealistic {loc_type.lower()} scene. Atmospheric setting with beautiful lighting, cinematic composition. 8K quality."
+            })
+            flashback_locs.append({
+                "id": f"loc_{i+1:02d}",
+                "name": loc_type,
+                "lock": loc_data["lock"],
+                "english_prompt": loc_data["english_prompt"]
+            })
+
+        # Nếu không đủ 6 locations, thêm generic
+        generic_locs = ["Home Interior", "City", "Park/Garden", "Night Scene", "Village/Countryside"]
+        while len(flashback_locs) < 6:
+            idx = len(flashback_locs) - 1  # -1 vì đã có loc_narrator
+            loc_type = generic_locs[idx % len(generic_locs)]
+            if loc_type not in [l["name"] for l in flashback_locs]:
+                loc_data = location_prompts.get(loc_type)
+                flashback_locs.append({
+                    "id": f"loc_{idx+1:02d}",
+                    "name": loc_type,
+                    "lock": loc_data["lock"],
+                    "english_prompt": loc_data["english_prompt"]
+                })
         all_loc_refs = []
         backup_locs = []
 
@@ -5882,7 +6186,9 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             })
 
         workbook.save_backup_locations(backup_locs)
-        self.logger.info(f"[FALLBACK] ✓ Đã tạo {len(flashback_locs)} locations (trong characters sheet)")
+        for fl in flashback_locs:
+            self.logger.info(f"[FALLBACK] ✓ {fl['id']}: {fl['name']}")
+        self.logger.info(f"[FALLBACK] ✓ Tổng {len(flashback_locs)} locations từ phân tích SRT")
 
         # === BƯỚC 6: Nhóm SRT thành scenes ===
         scenes_data = group_srt_into_scenes(
