@@ -330,16 +330,28 @@ For each character, provide:
 1. portrait_prompt: Full description for generating a reference portrait (white background, portrait style)
 2. character_lock: Short 10-15 word description to use in scene prompts (for consistency)
 
+IMPORTANT: Character IDs MUST follow this format:
+- "nvc" for the main narrator/protagonist
+- "nv1", "nv2", "nv3"... for other characters (numbered)
+
 Return JSON only:
 {{
     "characters": [
         {{
-            "id": "char_id",
+            "id": "nvc",
             "name": "Character Name",
-            "role": "protagonist/antagonist/supporting/narrator",
+            "role": "narrator",
             "portrait_prompt": "detailed portrait description for image generation, white background",
             "character_lock": "short description for scene prompts (10-15 words)",
             "vietnamese_description": "Mô tả tiếng Việt"
+        }},
+        {{
+            "id": "nv1",
+            "name": "Another Character",
+            "role": "supporting",
+            "portrait_prompt": "...",
+            "character_lock": "...",
+            "vietnamese_description": "..."
         }}
     ]
 }}
@@ -447,15 +459,26 @@ For each location, provide:
 1. location_prompt: Full description for generating a reference image
 2. location_lock: Short description to use in scene prompts
 
+IMPORTANT: Location IDs MUST follow this format:
+- "loc_narrator" for the narrator's storytelling location
+- "loc_01", "loc_02", "loc_03"... for other locations (numbered with 2 digits)
+
 Return JSON only:
 {{
     "locations": [
         {{
-            "id": "loc_id",
-            "name": "Location Name",
-            "location_prompt": "detailed location description for image generation",
-            "location_lock": "short description for scene prompts (10-15 words)",
-            "lighting_default": "default lighting for this location"
+            "id": "loc_narrator",
+            "name": "Storytelling Room",
+            "location_prompt": "cozy living room with warm lighting...",
+            "location_lock": "warm living room, soft lamp light",
+            "lighting_default": "warm evening light"
+        }},
+        {{
+            "id": "loc_01",
+            "name": "Main Location",
+            "location_prompt": "detailed location description...",
+            "location_lock": "short description for scene prompts",
+            "lighting_default": "natural daylight"
         }}
     ]
 }}
