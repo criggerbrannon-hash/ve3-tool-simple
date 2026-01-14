@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title VE3 - Setup Master (Voice to Excel)
+title VE3 - Setup Master (SRT + Edit)
 
 :: Use pushd for UNC path support
 pushd "%~dp0"

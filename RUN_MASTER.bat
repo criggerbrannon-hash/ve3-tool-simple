@@ -3,8 +3,8 @@ echo ============================================================
 echo   VE3 TOOL - MASTER SERVER
 echo ============================================================
 echo   Chay 2 script nen:
-echo   1. run_srt.py - Tao SRT tu voice
-echo   2. run_edit.py - Edit/merge video
+echo   1. run_srt.py - Voice to SRT (chi tao SRT)
+echo   2. run_edit.py - Merge video MP4
 echo ============================================================
 echo.
 

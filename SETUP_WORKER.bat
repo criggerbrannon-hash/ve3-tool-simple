@@ -1,13 +1,13 @@
 @echo off
 chcp 65001 >nul
-title VE3 - Setup Worker (Image/Video)
+title VE3 - Setup Worker (Excel + Image + Video)
 
 :: Use pushd for UNC path support
 pushd "%~dp0"
 
 echo ============================================
 echo   VE3 TOOL - SETUP MAY AO (WORKER)
-echo   Dung cho: run_worker.bat
+echo   Dung cho: RUN_WORKER.bat
 echo ============================================
 echo.
 
@@ -133,9 +133,7 @@ echo   HOAN TAT SETUP MAY AO!
 echo ============================================
 echo.
 echo   Cac lenh co the chay:
-echo   - run_worker.bat   : 1 Chrome (full man hinh)
-echo   - run_2worker.bat  : 2 Chrome (chia doi)
-echo   - run_3worker.bat  : 3 Chrome (grid)
+echo   - RUN_WORKER.bat   : Chay run_worker.py (Excel + Anh + Video)
 echo.
 echo   Dang nhap Google:
 echo   - python google_login.py
