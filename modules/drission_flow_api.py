@@ -1021,6 +1021,7 @@ class DrissionFlowAPI:
         # T2V mode tracking: chỉ chọn mode/model lần đầu khi mới mở Chrome
         # Sau F5 refresh thì trang vẫn giữ mode/model đã chọn, không cần chọn lại
         self._t2v_mode_selected = False  # True = đã chọn T2V mode + Lower Priority model
+        self._chrome_cleared = False  # True = Chrome đã bị clear data, cần login lại
 
     def log(self, msg: str, level: str = "INFO"):
         """Log message - chỉ dùng 1 trong 2: callback hoặc print."""
@@ -1451,6 +1452,7 @@ class DrissionFlowAPI:
 
             # Reset flags
             self._t2v_mode_selected = False
+            self._chrome_cleared = True  # Đánh dấu Chrome đã chết, cần user login lại
 
             return True
 
@@ -4408,6 +4410,14 @@ class DrissionFlowAPI:
         timeout: int
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """Thực hiện tạo video T2V mode một lần (không retry)."""
+        # Check nếu Chrome đã bị clear data - không thử nữa
+        if self._chrome_cleared:
+            return False, None, "Chrome đã bị clear data, cần login lại Google!"
+
+        # Check driver còn sống không
+        if not self.driver or not self.tab:
+            return False, None, "Chrome đã đóng, cần khởi động lại!"
+
         self.log(f"[T2V→I2V] Tạo video từ media: {media_id[:50]}...")
         self.log(f"[T2V→I2V] Prompt: {prompt[:60]}...")
 

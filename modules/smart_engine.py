@@ -4852,6 +4852,13 @@ if (btn) {
                         processed_scenes.add(scene_id)  # Đánh dấu đã xử lý (tránh retry liên tục)
                         self.log(f"[PARALLEL-VIDEO] ✗ Video FAILED: {scene_id} - {error}", "WARN")
 
+                        # Nếu Chrome đã bị clear/đóng, dừng loop hoàn toàn
+                        error_lower = str(error).lower() if error else ""
+                        if "login lại" in error_lower or "clear" in error_lower or "đã đóng" in error_lower or "khởi động" in error_lower:
+                            self.log("[PARALLEL-VIDEO] ⚠️ Chrome cần login lại - DỪNG video loop!", "ERROR")
+                            self._parallel_video_running = False
+                            break
+
             except Exception as e:
                 self.log(f"[PARALLEL-VIDEO] Error: {e}", "WARN")
 
