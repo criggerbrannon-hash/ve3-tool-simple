@@ -420,9 +420,85 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
             }
 
             // ============================================
-            // T2V → I2V CONVERSION MODE: Convert Text-to-Video thành Image-to-Video
+            // CUSTOM I2V PAYLOAD MODE (MỚI - ƯU TIÊN CAO NHẤT)
+            // Python chuẩn bị sẵn payload I2V hoàn chỉnh
+            // Chỉ cần lấy fresh reCAPTCHA từ Chrome và gửi thẳng
+            // ============================================
+            if (window._customI2vPayload && freshVideoRecaptcha) {
+                try {
+                    var customPayload = window._customI2vPayload;
+                    console.log('[CUSTOM-I2V] Using custom I2V payload...');
+                    console.log('[CUSTOM-I2V] Fresh reCAPTCHA length:', freshVideoRecaptcha.length);
+
+                    // Inject fresh reCAPTCHA vào payload
+                    customPayload.clientContext.recaptchaToken = freshVideoRecaptcha;
+
+                    // Lấy sessionId và projectId từ Chrome nếu payload chưa có
+                    if (chromeVideoBody && chromeVideoBody.clientContext) {
+                        if (!customPayload.clientContext.sessionId) {
+                            customPayload.clientContext.sessionId = chromeVideoBody.clientContext.sessionId;
+                        }
+                        if (!customPayload.clientContext.projectId) {
+                            customPayload.clientContext.projectId = chromeVideoBody.clientContext.projectId;
+                        }
+                    }
+
+                    console.log('[CUSTOM-I2V] Payload requests:', customPayload.requests.length);
+                    console.log('[CUSTOM-I2V] Model:', customPayload.requests[0].videoModelKey);
+                    console.log('[CUSTOM-I2V] MediaId:', customPayload.requests[0].referenceImages[0].mediaId.substring(0, 50) + '...');
+
+                    // URL cho I2V endpoint
+                    var i2vUrl = urlStr.includes('batchAsyncGenerateVideoReferenceImages')
+                        ? urlStr
+                        : urlStr.replace(/video:[^?]+/, 'video:batchAsyncGenerateVideoReferenceImages');
+
+                    // Nếu URL không chứa video endpoint, build URL mới
+                    if (!i2vUrl.includes('batchAsyncGenerateVideoReferenceImages')) {
+                        i2vUrl = 'https://aisandbox-pa.googleapis.com/v1:video:batchAsyncGenerateVideoReferenceImages';
+                    }
+
+                    console.log('[CUSTOM-I2V] Sending to:', i2vUrl);
+
+                    // Clear config trước khi gửi
+                    window._customI2vPayload = null;
+
+                    // Gửi request với custom payload
+                    var newOpts = Object.assign({}, opts);
+                    newOpts.body = JSON.stringify(customPayload);
+
+                    try {
+                        var response = await orig.apply(this, [i2vUrl, newOpts]);
+                        var cloned = response.clone();
+                        try {
+                            window._videoResponse = await cloned.json();
+                            console.log('[CUSTOM-I2V] Response status:', response.status);
+                            if (window._videoResponse.operations) {
+                                console.log('[CUSTOM-I2V] ✓ Got operations:', window._videoResponse.operations.length);
+                            }
+                            if (window._videoResponse.error) {
+                                console.log('[CUSTOM-I2V] ✗ Error:', JSON.stringify(window._videoResponse.error));
+                            }
+                        } catch(e) {
+                            window._videoResponse = {status: response.status, error: 'parse_failed'};
+                        }
+                        window._videoPending = false;
+                        return response;
+                    } catch(e) {
+                        console.log('[CUSTOM-I2V] Request failed:', e);
+                        window._videoError = e.toString();
+                        window._videoPending = false;
+                        throw e;
+                    }
+                } catch(e) {
+                    console.log('[CUSTOM-I2V] Error:', e);
+                    window._customI2vPayload = null;
+                }
+            }
+
+            // ============================================
+            // T2V → I2V CONVERSION MODE (LEGACY - dùng khi không có custom payload)
             // Chrome gửi T2V request (batchAsyncGenerateVideoText) với model veo_3_1_t2v_fast
-            // Interceptor đổi thành I2V (batchAsyncGenerateVideoReferenceImages) với model veo_3_0_r2v_fast
+            // Interceptor đổi thành I2V (batchAsyncGenerateVideoReferenceImages) với model veo_3_1_r2v_fast
             // ============================================
             if (window._t2vToI2vConfig && chromeVideoBody && urlStr.includes('batchAsyncGenerateVideoText')) {
                 try {
@@ -4419,6 +4495,241 @@ class DrissionFlowAPI:
                 return False, None, error
 
         return False, None, last_error or "Max retries exceeded"
+
+    def generate_video_custom_i2v(
+        self,
+        media_id: str,
+        prompt: str,
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
+        save_path: Optional[Path] = None,
+        max_wait: int = 300,
+        timeout: int = 180,
+        max_retries: int = 3
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Tạo video bằng CUSTOM I2V PAYLOAD - Python chuẩn bị payload, Chrome chỉ cung cấp reCAPTCHA.
+
+        Flow:
+        1. Python build payload I2V hoàn chỉnh (mediaId, prompt, model...)
+        2. Set window._customI2vPayload
+        3. Trigger Chrome gửi bất kỳ video request để lấy fresh reCAPTCHA
+        4. Interceptor inject reCAPTCHA vào payload của mình và gửi thẳng I2V
+
+        Ưu điểm:
+        - Không cần convert T2V→I2V
+        - Payload chuẩn 100%, giống Chrome thật
+        - Kiểm soát hoàn toàn model/settings
+
+        Args:
+            media_id: Media ID của ảnh (từ generate_image)
+            prompt: Video prompt (mô tả chuyển động)
+            aspect_ratio: Tỷ lệ video (LANDSCAPE/PORTRAIT/SQUARE)
+            video_model: Model I2V (default: veo_3_1_r2v_fast_landscape_ultra_relaxed)
+            save_path: Đường dẫn lưu video
+            max_wait: Thời gian poll tối đa
+            timeout: Timeout đợi response
+            max_retries: Số lần retry
+
+        Returns:
+            Tuple[success, video_path_or_url, error]
+        """
+        if not self._ready:
+            return False, None, "API chưa setup! Gọi setup() trước."
+
+        if not media_id:
+            return False, None, "Media ID không được để trống"
+
+        last_error = None
+
+        for attempt in range(max_retries):
+            success, result, error = self._execute_video_custom_i2v(
+                media_id=media_id,
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                video_model=video_model,
+                save_path=save_path,
+                max_wait=max_wait,
+                timeout=timeout
+            )
+
+            if success:
+                if self._consecutive_403 > 0:
+                    self.log(f"[CUSTOM-I2V] Reset 403 counter (was {self._consecutive_403})")
+                    self._consecutive_403 = 0
+                return True, result, None
+
+            if error:
+                last_error = error
+
+                # === 403 ERROR ===
+                if "403" in str(error):
+                    self._consecutive_403 += 1
+                    self.log(f"[CUSTOM-I2V] ⚠️ 403 error (lần {self._consecutive_403}) - RESET CHROME!", "WARN")
+
+                    if self._consecutive_403 >= 3:
+                        self.log(f"[CUSTOM-I2V] 🗑️ 403 liên tiếp {self._consecutive_403} lần → CLEAR CHROME DATA!")
+                        self.clear_chrome_data()
+                        self._consecutive_403 = 0
+                        return False, None, "403 liên tiếp - Đã clear Chrome data, cần login lại Google!"
+
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    if self.restart_chrome():
+                        self.log("[CUSTOM-I2V] → Chrome restarted, tiếp tục...")
+                        continue
+                    else:
+                        return False, None, "Không restart được Chrome sau 403"
+
+                # === TIMEOUT ERROR ===
+                if "timeout" in str(error).lower():
+                    self.log(f"[CUSTOM-I2V] ⚠️ Timeout (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        self._kill_chrome()
+                        self.close()
+                        time.sleep(2)
+                        if self.restart_chrome():
+                            continue
+
+                return False, None, error
+
+        return False, None, last_error or "Max retries exceeded"
+
+    def _execute_video_custom_i2v(
+        self,
+        media_id: str,
+        prompt: str,
+        aspect_ratio: str,
+        video_model: str,
+        save_path: Optional[Path],
+        max_wait: int,
+        timeout: int
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Thực hiện tạo video với custom I2V payload (không retry)."""
+        import uuid
+        import random
+
+        # Check Chrome state
+        if self._chrome_cleared:
+            return False, None, "Chrome đã bị clear data, cần login lại Google!"
+        if not self.driver or not self.tab:
+            return False, None, "Chrome đã đóng, cần khởi động lại!"
+
+        self.log(f"[CUSTOM-I2V] Tạo video từ media: {media_id[:50]}...")
+        self.log(f"[CUSTOM-I2V] Model: {video_model}")
+        self.log(f"[CUSTOM-I2V] Prompt: {prompt[:60]}...")
+
+        # 1. Chuyển sang T2V mode (chỉ để trigger Chrome gửi request)
+        if not self._t2v_mode_selected:
+            self.log("[CUSTOM-I2V] Chuyển sang T2V mode để trigger reCAPTCHA...")
+            self.switch_to_t2v_mode()
+            self.switch_to_lower_priority_model()
+            self._t2v_mode_selected = True
+
+        # 2. Build custom I2V payload
+        custom_payload = {
+            "clientContext": {
+                "recaptchaToken": "",  # Sẽ được inject bởi interceptor
+                "sessionId": "",       # Sẽ lấy từ Chrome
+                "projectId": "",       # Sẽ lấy từ Chrome
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "seed": random.randint(1000, 99999),
+                "textInput": {
+                    "prompt": prompt[:500]  # Giới hạn prompt
+                },
+                "videoModelKey": video_model,
+                "metadata": {
+                    "sceneId": str(uuid.uuid4())
+                },
+                "referenceImages": [{
+                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                    "mediaId": media_id
+                }]
+            }]
+        }
+
+        # 3. Reset video state và set custom payload
+        self.driver.run_js("""
+            window._videoResponse = null;
+            window._videoError = null;
+            window._videoPending = false;
+        """)
+        self.driver.run_js(f"window._customI2vPayload = {json.dumps(custom_payload)};")
+        self.log("[CUSTOM-I2V] ✓ Custom payload ready, đợi Chrome trigger...")
+
+        # 4. Tìm textarea và paste prompt để trigger request
+        textarea = self._find_textarea()
+        if not textarea:
+            return False, None, "Không tìm thấy textarea"
+
+        try:
+            textarea.click()
+            time.sleep(0.3)
+        except:
+            pass
+
+        # Paste prompt ngắn (chỉ cần trigger Chrome gửi request)
+        self._paste_prompt_ctrlv(textarea, "video")
+        time.sleep(2)
+
+        # 5. Nhấn Enter để trigger Chrome gửi request
+        self.driver.run_js("""
+            var ta = document.querySelector('textarea');
+            if (ta) {
+                ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true}));
+            }
+        """)
+        self.log("[CUSTOM-I2V] → Pressed Enter, đợi Interceptor xử lý...")
+
+        # 6. Đợi response
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                error = self.driver.run_js("return window._videoError;")
+                if error:
+                    self.log(f"[CUSTOM-I2V] ✗ Error: {error}", "ERROR")
+                    return False, None, error
+
+                response = self.driver.run_js("return window._videoResponse;")
+                if response:
+                    self.log(f"[CUSTOM-I2V] Got response!")
+
+                    # Check for API errors
+                    if response.get('error'):
+                        error_code = response['error'].get('code', 'unknown')
+                        error_msg = response['error'].get('message', str(response['error']))
+                        self.log(f"[CUSTOM-I2V] ✗ API Error {error_code}: {error_msg}", "ERROR")
+                        return False, None, f"Error {error_code}: {error_msg}"
+
+                    # Check for operations
+                    if response.get('operations'):
+                        operation = response['operations'][0].get('operation', {}).get('name')
+                        if operation:
+                            self.log(f"[CUSTOM-I2V] ✓ Operation started: {operation[-30:]}...")
+
+                            # Poll for video completion
+                            video_url = self._poll_video_operation_browser(operation, max_wait)
+                            if video_url:
+                                self.log(f"[CUSTOM-I2V] ✓ Video ready!")
+                                return self._download_video_if_needed(video_url, save_path)
+                            else:
+                                return False, None, "Timeout polling video"
+
+                    return False, None, "Response không có operations"
+
+            except Exception as e:
+                self.log(f"[CUSTOM-I2V] Check response error: {e}", "WARN")
+
+            time.sleep(0.5)
+
+        self.log("[CUSTOM-I2V] ✗ Timeout đợi response", "ERROR")
+        return False, None, "Timeout waiting for response"
 
     def _execute_video_t2v_mode(
         self,

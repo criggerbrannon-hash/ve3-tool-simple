@@ -4827,11 +4827,13 @@ if (btn) {
                             video_prompt = scene.video_prompt or video_prompt
                             break
 
-                    # Tạo video bằng T2V mode (Chrome ở "Từ văn bản sang video")
-                    # Interceptor convert T2V request → I2V API với media_id
-                    ok, result_path, error = drission_api.generate_video_t2v_mode(
+                    # Tạo video bằng CUSTOM I2V mode
+                    # Python chuẩn bị payload I2V, Chrome chỉ cung cấp fresh reCAPTCHA
+                    ok, result_path, error = drission_api.generate_video_custom_i2v(
                         media_id=media_id,
                         prompt=video_prompt,
+                        aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+                        video_model="veo_3_1_r2v_fast_landscape_ultra_relaxed",
                         save_path=mp4_path
                     )
 
