@@ -1109,9 +1109,9 @@ class DrissionFlowAPI:
         # Model fallback: khi quota exceeded (429), chuyển từ GEM_PIX_2 (Pro) sang GEM_PIX
         self._use_fallback_model = False  # True = dùng nano banana (GEM_PIX) thay vì pro (GEM_PIX_2)
 
-        # IPv6 rotation: TẠM TẮT - đặt 999 để không bao giờ kích hoạt
+        # IPv6 rotation: Bật sau 3 lần 403 liên tiếp
         self._consecutive_403 = 0
-        self._max_403_before_ipv6 = 999  # TẠM TẮT IPv6 (đặt 999)
+        self._max_403_before_ipv6 = 3  # Sau 3 lần 403 → activate/rotate IPv6
         self._ipv6_activated = False  # True = đã bật IPv6 proxy
 
         # T2V mode tracking: chỉ chọn mode/model lần đầu khi mới mở Chrome
@@ -4562,13 +4562,14 @@ class DrissionFlowAPI:
             if error:
                 last_error = error
 
-                # === 403 ERROR ===
+                # === 403 ERROR: RESET CHROME + IPv6 ===
                 if "403" in str(error):
                     self._consecutive_403 += 1
-                    self.log(f"[CUSTOM-I2V] ⚠️ 403 error (lần {self._consecutive_403}) - RESET CHROME!", "WARN")
+                    self.log(f"[CUSTOM-I2V] ⚠️ 403 error (lần {self._consecutive_403}/{self._max_403_before_ipv6}) - RESET CHROME!", "WARN")
 
-                    if self._consecutive_403 >= 3:
-                        self.log(f"[CUSTOM-I2V] 🗑️ 403 liên tiếp {self._consecutive_403} lần → CLEAR CHROME DATA!")
+                    # Sau 3 lần 403 liên tiếp với IPv6 đã bật, clear Chrome data
+                    if self._consecutive_403 >= 3 and self._ipv6_activated:
+                        self.log(f"[CUSTOM-I2V] 🗑️ 403 liên tiếp {self._consecutive_403} lần (đã có IPv6) → CLEAR CHROME DATA!")
                         self.clear_chrome_data()
                         self._consecutive_403 = 0
                         return False, None, "403 liên tiếp - Đã clear Chrome data, cần login lại Google!"
@@ -4577,7 +4578,20 @@ class DrissionFlowAPI:
                     self.close()
                     time.sleep(2)
 
-                    if self.restart_chrome():
+                    # === IPv6: Sau N lần 403 liên tiếp, ACTIVATE hoặc ROTATE IPv6 ===
+                    rotate_ipv6 = False
+                    if self._consecutive_403 >= self._max_403_before_ipv6:
+                        self._consecutive_403 = 0
+                        if not self._ipv6_activated:
+                            # Lần đầu: Activate IPv6
+                            self.log(f"[CUSTOM-I2V] → 🌐 ACTIVATE IPv6 MODE (lần đầu)...")
+                            self._activate_ipv6()
+                        else:
+                            # Đã có IPv6: Rotate sang IP khác
+                            self.log(f"[CUSTOM-I2V] → 🔄 Rotate sang IPv6 khác...")
+                            rotate_ipv6 = True
+
+                    if self.restart_chrome(rotate_ipv6=rotate_ipv6):
                         self.log("[CUSTOM-I2V] → Chrome restarted, tiếp tục...")
                         continue
                     else:
