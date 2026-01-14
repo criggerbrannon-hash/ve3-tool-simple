@@ -445,12 +445,32 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                             }];
 
                             // 3. Đổi model từ T2V sang I2V
-                            // T2V: veo_3_1_t2v_fast, veo_3_1_t2v_fast_ultra, veo_3_1_t2v
-                            // I2V: veo_3_0_r2v_fast, veo_3_0_r2v_fast_ultra, veo_3_0_r2v
-                            var currentModel = chromeVideoBody.requests[i].videoModelKey || 'veo_3_1_t2v_fast';
-                            var newModel = currentModel
-                                .replace('veo_3_1_t2v', 'veo_3_0_r2v')
-                                .replace('veo_3_0_t2v', 'veo_3_0_r2v');  // Fallback
+                            // T2V: veo_3_1_t2v_fast_ultra (không có aspect ratio)
+                            // I2V: veo_3_1_r2v_fast_landscape_ultra (có aspect ratio trong tên)
+                            var currentModel = chromeVideoBody.requests[i].videoModelKey || 'veo_3_1_t2v_fast_ultra';
+                            var aspectRatio = chromeVideoBody.requests[i].aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE';
+
+                            // Xác định aspect ratio suffix
+                            var aspectSuffix = 'landscape';  // default
+                            if (aspectRatio.includes('PORTRAIT')) {
+                                aspectSuffix = 'portrait';
+                            } else if (aspectRatio.includes('SQUARE')) {
+                                aspectSuffix = 'square';
+                            }
+
+                            // Convert model: veo_3_1_t2v → veo_3_1_r2v và thêm aspect ratio
+                            // Input:  veo_3_1_t2v_fast_ultra
+                            // Output: veo_3_1_r2v_fast_landscape_ultra
+                            var newModel = currentModel.replace('t2v', 'r2v');
+
+                            // Thêm aspect ratio vào trước _ultra hoặc cuối nếu không có _ultra
+                            if (newModel.includes('_ultra')) {
+                                newModel = newModel.replace('_ultra', '_' + aspectSuffix + '_ultra');
+                            } else if (newModel.includes('_fast')) {
+                                newModel = newModel + '_' + aspectSuffix;
+                            } else {
+                                newModel = newModel + '_' + aspectSuffix;
+                            }
 
                             // Override nếu config có chỉ định
                             if (t2vConfig.videoModelKey) {
