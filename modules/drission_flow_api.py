@@ -4614,7 +4614,7 @@ class DrissionFlowAPI:
         # Check Chrome state
         if self._chrome_cleared:
             return False, None, "Chrome đã bị clear data, cần login lại Google!"
-        if not self.driver or not self.tab:
+        if not self.driver:
             return False, None, "Chrome đã đóng, cần khởi động lại!"
 
         self.log(f"[CUSTOM-I2V] Tạo video từ media: {media_id[:50]}...")
@@ -4746,7 +4746,7 @@ class DrissionFlowAPI:
             return False, None, "Chrome đã bị clear data, cần login lại Google!"
 
         # Check driver còn sống không
-        if not self.driver or not self.tab:
+        if not self.driver:
             return False, None, "Chrome đã đóng, cần khởi động lại!"
 
         self.log(f"[T2V→I2V] Tạo video từ media: {media_id[:50]}...")
