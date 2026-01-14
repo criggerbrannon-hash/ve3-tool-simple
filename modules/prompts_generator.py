@@ -5865,47 +5865,122 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             pos_in_group = (scene_id - 1) % 10
             return pos_in_group in [0, 3, 6]  # 30%: positions 1, 4, 7 in each 10
 
-        # === BƯỚC 8: Định nghĩa góc máy chuyên nghiệp ===
-        # NARRATOR: Intimate, documentary-style, focus on storyteller
+        # === BƯỚC 8: Định nghĩa góc máy CINEMATIC ===
+        # Phong cách: Hollywood blockbuster + Art house cinema
+        # Mỗi góc = (shot, lens, composition, lighting, atmosphere, emotion)
+
+        # NARRATOR: Intimate storytelling - like interview in documentary
         narrator_angles = [
-            # (shot_type, lens, composition, lighting, color_grade)
-            ("Intimate close-up", "85mm f/1.4", "face filling frame, eyes at upper third",
-             "soft Rembrandt lighting, warm key light from side", "warm amber tones, soft contrast"),
-            ("Medium close-up", "50mm f/1.8", "head and shoulders, slight off-center",
-             "butterfly lighting, subtle fill", "natural skin tones, gentle vignette"),
-            ("Medium shot", "35mm f/2", "upper body visible, hands in frame",
-             "motivated window light, soft shadows", "warm golden hour palette"),
-            ("Wide medium", "28mm f/2.8", "full seated posture, environment context",
-             "practical lamp lighting, ambient fill", "cozy warm atmosphere, deep shadows"),
-            ("Over-shoulder contemplative", "50mm f/1.8", "profile view, looking into space",
-             "rim light from behind, soft key", "moody warm tones, cinematic contrast"),
-            ("Low angle medium", "35mm f/2", "slight upward angle, empowering perspective",
-             "dramatic side lighting, defined shadows", "rich warm colors, film grain texture"),
+            ("Intimate close-up", "85mm f/1.4 anamorphic",
+             "face filling frame, eyes precisely at upper third intersection, shallow depth",
+             "soft Rembrandt lighting with warm tungsten key from 45 degrees, gentle hair light",
+             "dust particles floating in light beam, warm amber atmosphere, evening indoor",
+             "contemplative, nostalgic, vulnerable authenticity"),
+
+            ("Medium portrait", "50mm f/1.4",
+             "head and shoulders, subject slightly left of center, negative space for thoughts",
+             "butterfly lighting with soft fill, subtle rim light separating from background",
+             "soft bokeh background with practical warm lamps, cozy living room depth",
+             "thoughtful, wise, gentle storytelling presence"),
+
+            ("Environmental medium", "35mm f/2",
+             "upper body with hands visible, books and memories in soft background",
+             "motivated window light creating natural gradient, soft shadows on face",
+             "golden hour warmth spilling through curtains, floating dust motes",
+             "grounded, authentic, lived-in atmosphere"),
+
+            ("Wide establishing", "28mm f/2.8",
+             "full seated figure in context, rule of thirds, leading lines from furniture",
+             "practical lamp as key, ambient fill from unseen window, deep shadows",
+             "rich interior atmosphere, warm pools of light, shadow play on walls",
+             "intimate sanctuary, safe space for memories"),
+
+            ("Profile contemplative", "85mm f/1.8",
+             "pure profile silhouette edge, looking toward soft light source",
+             "strong rim light from behind, minimal fill preserving mystery",
+             "ethereal backlight glow, lens flare kiss, atmospheric haze",
+             "reflective, deep in memory, bittersweet longing"),
+
+            ("Low angle reverent", "35mm f/2",
+             "slight upward angle, subject appears wise and authoritative",
+             "dramatic side key with strong shadow, warm practical fill",
+             "smoke or dust catching light beams, cinematic atmosphere",
+             "respected elder, keeper of stories, quiet strength"),
         ]
 
-        # FLASHBACK: Cinematic, dramatic, storytelling visuals
+        # FLASHBACK: Epic cinematic storytelling - blockbuster visual impact
         flashback_angles = [
-            # (shot_type, lens, composition, lighting, color_grade)
-            ("Epic wide establishing", "24mm anamorphic", "rule of thirds, leading lines to subject",
-             "golden hour backlight, atmospheric haze", "teal and orange, cinematic LUT"),
-            ("Dynamic medium", "35mm f/1.4", "subject off-center, negative space for mood",
-             "dramatic chiaroscuro, strong key light", "desaturated with warm highlights"),
-            ("Emotional close-up", "85mm f/1.2", "eyes sharp, everything else bokeh",
-             "soft wraparound light, catch lights in eyes", "natural with lifted shadows"),
-            ("Dutch angle medium", "28mm f/2", "tilted 15 degrees, tension and unease",
-             "harsh directional light, deep shadows", "cool blue shadows, warm highlights"),
-            ("Silhouette wide", "24mm f/2.8", "subject against bright background",
-             "strong backlight, minimal fill", "high contrast, crushed blacks"),
-            ("Tracking medium", "50mm f/1.8", "subject centered, motion blur background",
-             "natural available light", "filmic color science, subtle grain"),
-            ("Bird's eye overhead", "24mm f/2.8", "looking straight down, pattern composition",
-             "soft diffused overhead light", "muted earth tones, low saturation"),
-            ("Low angle hero shot", "24mm f/1.4", "looking up at subject, powerful stance",
-             "dramatic rim light, lens flare", "high contrast, vivid colors"),
-            ("Intimate insert", "100mm macro f/2.8", "detail shot, hands or objects",
-             "soft directional light, shallow DOF", "warm nostalgic tones"),
-            ("Reflective POV", "35mm f/2", "through window or mirror, layered depth",
-             "mixed practical lighting", "dreamlike soft focus edges"),
+            ("Epic wide master", "24mm anamorphic",
+             "vast establishing shot, tiny figures in grand landscape, rule of thirds",
+             "golden hour magic light, sun low on horizon, long dramatic shadows",
+             "atmospheric haze, god rays through clouds, epic scale",
+             "awe-inspiring, destiny awaits, journey begins"),
+
+            ("Dramatic medium", "35mm f/1.4",
+             "subject off-center with purposeful negative space, tension composition",
+             "harsh chiaroscuro, single strong source, half face in shadow",
+             "rain or mist in air catching light, moody urban or nature setting",
+             "conflict, determination, inner struggle"),
+
+            ("Emotional extreme close-up", "100mm f/2",
+             "eyes only, crystal sharp iris detail, soul-window intimacy",
+             "soft wraparound beauty light, perfect catch lights, no harsh shadows",
+             "tear glistening, emotion raw, ultra shallow depth",
+             "vulnerability, truth moment, heart breaking or healing"),
+
+            ("Dutch tension", "28mm f/2",
+             "15-degree tilt, unstable world, subject fighting against frame",
+             "harsh directional light, deep noir shadows, anxiety inducing",
+             "urban night, neon reflections, rain-slicked surfaces",
+             "unease, world off-balance, crisis point"),
+
+            ("Silhouette epic", "24mm f/2.8",
+             "pure black figure against blazing sky or bright window",
+             "extreme backlight, no fill, graphic bold shape",
+             "sunrise/sunset fire colors, or heavenly white light",
+             "transformation, hope emerging, destiny moment"),
+
+            ("Intimate two-shot", "50mm f/1.8",
+             "two figures in meaningful proximity, connection visible",
+             "soft motivated light, faces both visible, emotional bridge",
+             "warm interior or soft exterior, relationship atmosphere",
+             "connection, love, understanding, shared moment"),
+
+            ("Bird's eye fate", "24mm f/2.8",
+             "god's view looking down, subject small in grand pattern",
+             "soft even light revealing texture, no harsh shadows",
+             "geometric patterns, nature fractals, life's grand design",
+             "fate, insignificance, part of something greater"),
+
+            ("Hero low angle", "24mm f/1.4",
+             "powerful upward shot, subject towering, sky behind",
+             "dramatic rim light, lens flare intentional, heroic lighting",
+             "clouds moving, sunset fire, wind-blown elements",
+             "triumph, power, overcoming, inspirational"),
+
+            ("Memory insert", "100mm macro f/2.8",
+             "hands holding meaningful object, or detail that tells story",
+             "soft pool of light on subject, darkness around, spotlight effect",
+             "dust on old photograph, texture of worn letter, meaningful prop",
+             "nostalgia, memory trigger, emotional anchor"),
+
+            ("Reflection poetry", "35mm f/2",
+             "subject seen through window or mirror, layered reality",
+             "mixed sources, reflection and real competing, dreamy blend",
+             "rain on glass, condensation, imperfect reflection",
+             "introspection, duality, past and present merging"),
+
+            ("Chase/action wide", "18mm f/2.8",
+             "dynamic diagonal composition, motion frozen, energy captured",
+             "available light, gritty realistic, documentary feel",
+             "motion blur on edges, sharp subject, speed and urgency",
+             "tension, escape, pursuit, heart-pounding moment"),
+
+            ("Peaceful resolution", "50mm f/2",
+             "balanced symmetrical frame, subject at peace, harmony",
+             "soft golden light, no harsh elements, gentle embracing light",
+             "nature beauty, soft wind, leaves or petals floating",
+             "acceptance, peace, resolution, quiet joy"),
         ]
 
         # Build ALL references string cho Flashback
@@ -5929,7 +6004,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 # Chỉ dùng người kể (nvc) + bối cảnh cố định (loc_narrator)
                 narrator_count += 1
                 angle_idx = narrator_count % len(narrator_angles)
-                shot_type, lens, composition, lighting, color_grade = narrator_angles[angle_idx]
+                shot_type, lens, composition, lighting, atmosphere, emotion = narrator_angles[angle_idx]
 
                 # References CỐ ĐỊNH cho Narrator - an toàn, nhất quán
                 characters_used = '["nvc"]'
@@ -5937,11 +6012,12 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 reference_files = '["nvc.png", "loc_narrator.png"]'
 
                 fallback_prompt = (
-                    f"{shot_type}, {lens}, {composition}. "
-                    f"{lighting}. {color_grade}. "
+                    f"{shot_type}, {lens}. {composition}. "
+                    f"{lighting}. {atmosphere}. "
                     f"{CHARACTER_LOCK}, {COSTUME_LOCK}. "
                     f"{LOCATION_LOCK}. "
-                    f"Photorealistic, 4K resolution. "
+                    f"Mood: {emotion}. "
+                    f"Photorealistic, 8K cinematic quality, film grain, shallow depth of field. "
                     f"(nvc.png, loc_narrator.png)"
                 )
 
@@ -5950,7 +6026,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 # Dùng TẤT CẢ references - Flow tự chọn phù hợp với SRT content
                 flashback_count += 1
                 angle_idx = flashback_count % len(flashback_angles)
-                shot_type, lens, composition, lighting, color_grade = flashback_angles[angle_idx]
+                shot_type, lens, composition, lighting, atmosphere, emotion = flashback_angles[angle_idx]
 
                 all_char_ids = ["nvc"] + [c["id"] for c in flashback_chars]
                 characters_used = json.dumps(all_char_ids)
@@ -5958,10 +6034,11 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 reference_files = json.dumps(all_refs)
 
                 fallback_prompt = (
-                    f"{shot_type}, {lens}, {composition}. "
-                    f"{lighting}. {color_grade}. "
-                    f"Visual illustration for: \"{srt_text}\". "
-                    f"Photorealistic, 4K resolution, film grain texture. "
+                    f"{shot_type}, {lens}. {composition}. "
+                    f"{lighting}. {atmosphere}. "
+                    f"Mood: {emotion}. "
+                    f"Visual story: \"{srt_text}\". "
+                    f"Photorealistic, 8K cinematic quality, film grain, anamorphic lens flare. "
                     f"({all_refs_str})"
                 )
 
