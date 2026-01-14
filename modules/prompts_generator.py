@@ -5865,20 +5865,47 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
             pos_in_group = (scene_id - 1) % 10
             return pos_in_group in [0, 3, 6]  # 30%: positions 1, 4, 7 in each 10
 
-        # === BƯỚC 8: Định nghĩa góc máy ===
+        # === BƯỚC 8: Định nghĩa góc máy chuyên nghiệp ===
+        # NARRATOR: Intimate, documentary-style, focus on storyteller
         narrator_angles = [
-            ("Close-up shot", "85mm portrait lens", "face filling frame, shallow depth of field"),
-            ("Medium shot", "50mm lens", "upper body visible, seated posture"),
-            ("Wide shot", "35mm lens", "full setting visible, character in environment"),
-            ("Over-shoulder shot", "50mm lens", "contemplative angle, looking off-frame"),
+            # (shot_type, lens, composition, lighting, color_grade)
+            ("Intimate close-up", "85mm f/1.4", "face filling frame, eyes at upper third",
+             "soft Rembrandt lighting, warm key light from side", "warm amber tones, soft contrast"),
+            ("Medium close-up", "50mm f/1.8", "head and shoulders, slight off-center",
+             "butterfly lighting, subtle fill", "natural skin tones, gentle vignette"),
+            ("Medium shot", "35mm f/2", "upper body visible, hands in frame",
+             "motivated window light, soft shadows", "warm golden hour palette"),
+            ("Wide medium", "28mm f/2.8", "full seated posture, environment context",
+             "practical lamp lighting, ambient fill", "cozy warm atmosphere, deep shadows"),
+            ("Over-shoulder contemplative", "50mm f/1.8", "profile view, looking into space",
+             "rim light from behind, soft key", "moody warm tones, cinematic contrast"),
+            ("Low angle medium", "35mm f/2", "slight upward angle, empowering perspective",
+             "dramatic side lighting, defined shadows", "rich warm colors, film grain texture"),
         ]
 
+        # FLASHBACK: Cinematic, dramatic, storytelling visuals
         flashback_angles = [
-            ("Wide establishing shot", "24mm cinematic lens", "full scene visible, dramatic composition"),
-            ("Medium shot", "50mm lens", "subject centered, balanced framing"),
-            ("Close-up", "85mm lens", "emotional detail, shallow depth of field"),
-            ("Dynamic angle", "35mm lens", "dramatic perspective, visual interest"),
-            ("Atmospheric wide", "35mm anamorphic", "cinematic scope, mood lighting"),
+            # (shot_type, lens, composition, lighting, color_grade)
+            ("Epic wide establishing", "24mm anamorphic", "rule of thirds, leading lines to subject",
+             "golden hour backlight, atmospheric haze", "teal and orange, cinematic LUT"),
+            ("Dynamic medium", "35mm f/1.4", "subject off-center, negative space for mood",
+             "dramatic chiaroscuro, strong key light", "desaturated with warm highlights"),
+            ("Emotional close-up", "85mm f/1.2", "eyes sharp, everything else bokeh",
+             "soft wraparound light, catch lights in eyes", "natural with lifted shadows"),
+            ("Dutch angle medium", "28mm f/2", "tilted 15 degrees, tension and unease",
+             "harsh directional light, deep shadows", "cool blue shadows, warm highlights"),
+            ("Silhouette wide", "24mm f/2.8", "subject against bright background",
+             "strong backlight, minimal fill", "high contrast, crushed blacks"),
+            ("Tracking medium", "50mm f/1.8", "subject centered, motion blur background",
+             "natural available light", "filmic color science, subtle grain"),
+            ("Bird's eye overhead", "24mm f/2.8", "looking straight down, pattern composition",
+             "soft diffused overhead light", "muted earth tones, low saturation"),
+            ("Low angle hero shot", "24mm f/1.4", "looking up at subject, powerful stance",
+             "dramatic rim light, lens flare", "high contrast, vivid colors"),
+            ("Intimate insert", "100mm macro f/2.8", "detail shot, hands or objects",
+             "soft directional light, shallow DOF", "warm nostalgic tones"),
+            ("Reflective POV", "35mm f/2", "through window or mirror, layered depth",
+             "mixed practical lighting", "dreamlike soft focus edges"),
         ]
 
         # Build ALL references string cho Flashback
@@ -5902,7 +5929,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 # Chỉ dùng người kể (nvc) + bối cảnh cố định (loc_narrator)
                 narrator_count += 1
                 angle_idx = narrator_count % len(narrator_angles)
-                shot_type, lens, framing = narrator_angles[angle_idx]
+                shot_type, lens, composition, lighting, color_grade = narrator_angles[angle_idx]
 
                 # References CỐ ĐỊNH cho Narrator - an toàn, nhất quán
                 characters_used = '["nvc"]'
@@ -5910,11 +5937,11 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 reference_files = '["nvc.png", "loc_narrator.png"]'
 
                 fallback_prompt = (
-                    f"{shot_type}, {lens}, {framing}. "
-                    f"{CHARACTER_LOCK}, {COSTUME_LOCK}, "
-                    f"thoughtful contemplative expression, gentle knowing look. "
+                    f"{shot_type}, {lens}, {composition}. "
+                    f"{lighting}. {color_grade}. "
+                    f"{CHARACTER_LOCK}, {COSTUME_LOCK}. "
                     f"{LOCATION_LOCK}. "
-                    f"Photorealistic, 4K cinematic quality, warm color grading. "
+                    f"Photorealistic, 4K resolution. "
                     f"(nvc.png, loc_narrator.png)"
                 )
 
@@ -5923,7 +5950,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 # Dùng TẤT CẢ references - Flow tự chọn phù hợp với SRT content
                 flashback_count += 1
                 angle_idx = flashback_count % len(flashback_angles)
-                shot_type, lens, framing = flashback_angles[angle_idx]
+                shot_type, lens, composition, lighting, color_grade = flashback_angles[angle_idx]
 
                 all_char_ids = ["nvc"] + [c["id"] for c in flashback_chars]
                 characters_used = json.dumps(all_char_ids)
@@ -5931,10 +5958,10 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 reference_files = json.dumps(all_refs)
 
                 fallback_prompt = (
-                    f"{shot_type}, {lens}, {framing}. "
+                    f"{shot_type}, {lens}, {composition}. "
+                    f"{lighting}. {color_grade}. "
                     f"Visual illustration for: \"{srt_text}\". "
-                    f"Cinematic lighting, dramatic atmosphere, storytelling imagery. "
-                    f"Photorealistic, 4K cinematic quality, film grain texture. "
+                    f"Photorealistic, 4K resolution, film grain texture. "
                     f"({all_refs_str})"
                 )
 
