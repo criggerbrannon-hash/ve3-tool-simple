@@ -1198,16 +1198,41 @@ Return JSON only:
 }}
 """
 
-            # Call API
-            response = self._call_api(prompt, temperature=0.4, max_tokens=8192)
-            if not response:
-                self._log(f"  ERROR: API failed for batch {batch_num}!", "ERROR")
-                continue
+            # Call API with retry logic
+            MAX_RETRIES = 3
+            data = None
 
-            # Parse response
-            data = self._extract_json(response)
+            for retry in range(MAX_RETRIES):
+                response = self._call_api(prompt, temperature=0.4, max_tokens=8192)
+                if not response:
+                    self._log(f"     Retry {retry+1}/{MAX_RETRIES}: API call failed", "WARNING")
+                    time.sleep(2 ** retry)  # Exponential backoff
+                    continue
+
+                # Parse response
+                data = self._extract_json(response)
+                if data and "scene_plans" in data:
+                    break  # Success!
+                else:
+                    self._log(f"     Retry {retry+1}/{MAX_RETRIES}: JSON parse failed", "WARNING")
+                    time.sleep(2 ** retry)
+
             if not data or "scene_plans" not in data:
-                self._log(f"  ERROR: Could not parse batch {batch_num}!", "ERROR")
+                # Fallback: create basic plans for this batch
+                self._log(f"  WARNING: Batch {batch_num} failed after {MAX_RETRIES} retries, using fallback", "WARNING")
+                for scene in batch:
+                    fallback_plan = {
+                        "scene_id": scene.get("scene_id"),
+                        "artistic_intent": f"Convey the moment: {scene.get('visual_moment', '')[:100]}",
+                        "shot_type": scene.get("camera", "Medium shot"),
+                        "character_action": "As described in visual moment",
+                        "mood": "Matches the narration tone",
+                        "lighting": scene.get("lighting", "Natural lighting"),
+                        "color_palette": "Neutral tones",
+                        "key_focus": "Main subject of the scene"
+                    }
+                    all_plans.append(fallback_plan)
+                self._log(f"     -> Created {len(batch)} fallback plans")
                 continue
 
             # Add to results
