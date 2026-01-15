@@ -3480,7 +3480,7 @@ class DrissionFlowAPI:
         media_id: str,
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -3747,7 +3747,7 @@ class DrissionFlowAPI:
         media_id: str,
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         save_path: Optional[Path] = None,
         max_retries: int = 3
@@ -4138,7 +4138,7 @@ class DrissionFlowAPI:
         prompt: str,
         save_path: Optional[Path] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         timeout: int = 60,
         max_retries: int = 3
@@ -4277,7 +4277,7 @@ class DrissionFlowAPI:
         prompt: str,
         save_path: Optional[Path] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         timeout: int = 60
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -4528,7 +4528,7 @@ class DrissionFlowAPI:
         media_id: str,
         prompt: str,
         save_path: Optional[Path] = None,
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         timeout: int = 180,  # Tăng từ 60 → 180 giây
         max_retries: int = 3

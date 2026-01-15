@@ -246,7 +246,7 @@ def process_project_video(code: str, video_count: int = -1, callback=None) -> bo
             log(f"  ❌ Failed to setup Chrome for video!")
             return False
 
-        log(f"  🎬 Using T2V→I2V MODE (T2V UI → interceptor convert → I2V API)")
+        log(f"  🎬 Using FORCE VIDEO MODE (Image UI → interceptor → Video API)")
         time.sleep(1)
 
         # Create videos
@@ -282,11 +282,12 @@ def process_project_video(code: str, video_count: int = -1, callback=None) -> bo
                     continue
 
             try:
-                # Use T2V→I2V MODE:
-                # - UI ở "Từ văn bản sang video" (T2V) - JS đã OK
-                # - Interceptor convert: batchAsyncGenerateVideoText → batchAsyncGenerateVideoReferenceImages
-                # - Interceptor thêm referenceImages với mediaId
-                ok, result_path, error = api.generate_video_t2v_mode(
+                # Use FORCE VIDEO MODE (giống bên ảnh):
+                # - Chrome ở mode "Tạo hình ảnh"
+                # - Interceptor lấy fresh reCAPTCHA từ image request
+                # - Đổi URL và payload thành video request
+                # - Model: veo_3_1_r2v_fast_landscape_ultra_relaxed
+                ok, result_path, error = api.generate_video_chrome(
                     media_id=media_id,
                     prompt=video_prompt,
                     save_path=mp4_path
