@@ -442,48 +442,49 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                     console.log('[T2V→I2V] Original URL:', urlStr);
                     console.log('[T2V→I2V] Chrome original payload:', JSON.stringify(chromeVideoBody, null, 2));
 
-                    // 1. Đổi URL: batchAsyncGenerateVideoText → batchAsyncGenerateVideoReferenceImages
+                    // 1. Đổi URL: T2V endpoint → I2V endpoint
                     var newUrl = urlStr.replace('batchAsyncGenerateVideoText', 'batchAsyncGenerateVideoReferenceImages');
                     console.log('[T2V→I2V] New URL:', newUrl);
 
-                    // 2. CHỈ GIỮ 1 REQUEST - API I2V không hỗ trợ batch
-                    if (chromeVideoBody.requests && chromeVideoBody.requests.length > 1) {
-                        console.log('[T2V→I2V] Chrome gửi ' + chromeVideoBody.requests.length + ' requests, chỉ giữ 1');
-                        chromeVideoBody.requests = chromeVideoBody.requests.slice(0, 1);
-                    }
+                    // 2. GIỮ TẤT CẢ REQUESTS - Thêm referenceImages và fix model cho mỗi request
+                    console.log('[T2V→I2V] Processing ' + (chromeVideoBody.requests ? chromeVideoBody.requests.length : 0) + ' requests');
 
-                    // 3. Thêm referenceImages và fix model
                     if (chromeVideoBody.requests && chromeVideoBody.requests.length > 0) {
-                        var req = chromeVideoBody.requests[0];
+                        for (var i = 0; i < chromeVideoBody.requests.length; i++) {
+                            var req = chromeVideoBody.requests[i];
 
-                        // Thêm reference image với mediaId từ ảnh đã upload
-                        req.referenceImages = [{
-                            "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
-                            "mediaId": t2vConfig.mediaId
-                        }];
+                            // Thêm reference image với mediaId từ ảnh đã upload
+                            req.referenceImages = [{
+                                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                                "mediaId": t2vConfig.mediaId
+                            }];
 
-                        // GIỮ seed - I2V CẦN seed (đã test thủ công OK)
-                        // delete req.seed; // KHÔNG XÓA!
+                            // GIỮ seed - I2V CẦN seed
 
-                        // 4. Đổi model từ T2V sang I2V
-                        // CHỈ đổi _t2v_ → _r2v_, GIỮ NGUYÊN tất cả phần còn lại
-                        // Ví dụ: veo_3_1_t2v_fast_landscape_ultra_relaxed → veo_3_1_r2v_fast_landscape_ultra_relaxed
-                        var currentModel = req.videoModelKey || 'veo_3_1_t2v_fast';
-                        console.log('[T2V→I2V] Original model from Chrome:', currentModel);
+                            // Đổi model từ T2V sang I2V
+                            var currentModel = req.videoModelKey || 'veo_3_1_t2v_fast';
 
-                        // FIX: Chỉ đổi t2v → r2v, GIỮ _landscape_, _relaxed, veo_3_1
-                        var newModel = currentModel.replace('_t2v_', '_r2v_');
+                            // STEP 1: Đổi _t2v_ → _r2v_
+                            var newModel = currentModel.replace('_t2v_', '_r2v_');
 
-                        // Override nếu config có chỉ định model cụ thể
-                        if (t2vConfig.videoModelKey) {
-                            newModel = t2vConfig.videoModelKey;
+                            // STEP 2: Thêm _landscape trước _ultra (I2V model format)
+                            if (newModel.includes('_ultra') && !newModel.includes('_landscape')) {
+                                newModel = newModel.replace('_ultra', '_landscape_ultra');
+                            }
+
+                            // Override nếu config có chỉ định model cụ thể
+                            if (t2vConfig.videoModelKey) {
+                                newModel = t2vConfig.videoModelKey;
+                            }
+
+                            req.videoModelKey = newModel;
+
+                            if (i === 0) {
+                                console.log('[T2V→I2V] Model converted:', currentModel, '→', newModel);
+                                console.log('[T2V→I2V] MediaId:', t2vConfig.mediaId.substring(0, 50) + '...');
+                            }
                         }
-
-                        req.videoModelKey = newModel;
-                        console.log('[T2V→I2V] Model converted:', currentModel, '→', newModel);
-                        console.log('[T2V→I2V] MediaId:', t2vConfig.mediaId.substring(0, 50) + '...');
-                        console.log('[T2V→I2V] Seed:', req.seed);
-                        console.log('[T2V→I2V] Final request:', JSON.stringify(req, null, 2));
+                        console.log('[T2V→I2V] All ' + chromeVideoBody.requests.length + ' requests processed');
                     }
 
                     // Update body với payload đã convert
@@ -3464,7 +3465,7 @@ class DrissionFlowAPI:
         media_id: str,
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -3731,7 +3732,7 @@ class DrissionFlowAPI:
         media_id: str,
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         save_path: Optional[Path] = None,
         max_retries: int = 3
@@ -4122,7 +4123,7 @@ class DrissionFlowAPI:
         prompt: str,
         save_path: Optional[Path] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         timeout: int = 60,
         max_retries: int = 3
@@ -4261,7 +4262,7 @@ class DrissionFlowAPI:
         prompt: str,
         save_path: Optional[Path] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         timeout: int = 60
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -4512,7 +4513,7 @@ class DrissionFlowAPI:
         media_id: str,
         prompt: str,
         save_path: Optional[Path] = None,
-        video_model: str = "veo_3_0_r2v_fast_ultra",
+        video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
         max_wait: int = 300,
         timeout: int = 180,  # Tăng từ 60 → 180 giây
         max_retries: int = 3
@@ -4723,7 +4724,7 @@ class DrissionFlowAPI:
         self.log(f"[T2V→I2V] Tạo video với:")
         self.log(f"[T2V→I2V]   → Media ID: {media_id[:60]}...")
         self.log(f"[T2V→I2V]   → Prompt: {prompt[:60]}...")
-        self.log(f"[T2V→I2V]   → Model: {video_model}")
+        self.log(f"[T2V→I2V]   → Model: Chrome sẽ dùng (interceptor convert _t2v_ → _r2v_)")
 
         # 1. Chuyển sang T2V mode + Lower Priority model
         # CHỈ LÀM LẦN ĐẦU khi mới mở Chrome - sau F5 refresh không cần làm lại
@@ -4751,9 +4752,13 @@ class DrissionFlowAPI:
         """)
 
         # 2. Set T2V→I2V config
+        # QUAN TRỌNG: KHÔNG gửi videoModelKey - để interceptor tự convert từ Chrome model
+        # Chrome gửi: veo_3_1_t2v_fast_ultra_relaxed
+        # Interceptor sẽ convert: _t2v_ → _r2v_ → veo_3_1_r2v_fast_ultra_relaxed
+        # Nếu gửi videoModelKey, sẽ override thành model sai (veo_3_0_r2v_fast_ultra)
         t2v_config = {
-            "mediaId": media_id,
-            "videoModelKey": video_model
+            "mediaId": media_id
+            # videoModelKey: Bỏ để dùng Chrome model convert (giữ _relaxed, veo_3_1, etc.)
         }
         self.driver.run_js(f"window._t2vToI2vConfig = {json.dumps(t2v_config)};")
 
