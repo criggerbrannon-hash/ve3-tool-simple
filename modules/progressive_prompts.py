@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Callable
 from dataclasses import dataclass
 from enum import Enum
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from modules.utils import (
     get_logger,
@@ -1431,15 +1432,24 @@ Create exactly {image_count} scenes!"""
         self._log(f"  Director plan: {len(director_plan)} scenes")
         self._log(f"  Story segments: {len(story_segments)}")
 
-        # Process in batches
+        # Process in batches - PARALLEL processing
         BATCH_SIZE = 15
+        MAX_PARALLEL = 4  # Max concurrent API calls
         all_plans = []
 
+        # Prepare all batches
+        batches = []
         for batch_start in range(0, len(director_plan), BATCH_SIZE):
             batch = director_plan[batch_start:batch_start + BATCH_SIZE]
             batch_num = batch_start // BATCH_SIZE + 1
+            batches.append((batch_num, batch_start, batch))
 
-            self._log(f"  Planning batch {batch_num}: scenes {batch_start+1}-{batch_start+len(batch)}")
+        total_batches = len(batches)
+        self._log(f"  Processing {total_batches} batches in parallel (max {MAX_PARALLEL} concurrent)")
+
+        def process_single_batch(batch_info):
+            """Process a single batch - called in parallel"""
+            batch_num, batch_start, batch = batch_info
 
             # Format scenes for prompt
             scenes_text = ""
@@ -1503,7 +1513,6 @@ Return JSON only:
             for retry in range(MAX_RETRIES):
                 response = self._call_api(prompt, temperature=0.4, max_tokens=8192)
                 if not response:
-                    self._log(f"     Retry {retry+1}/{MAX_RETRIES}: API call failed", "WARNING")
                     time.sleep(2 ** retry)  # Exponential backoff
                     continue
 
@@ -1512,12 +1521,11 @@ Return JSON only:
                 if data and "scene_plans" in data:
                     break  # Success!
                 else:
-                    self._log(f"     Retry {retry+1}/{MAX_RETRIES}: JSON parse failed", "WARNING")
                     time.sleep(2 ** retry)
 
             if not data or "scene_plans" not in data:
                 # Fallback: create basic plans for this batch
-                self._log(f"  WARNING: Batch {batch_num} failed after {MAX_RETRIES} retries, using fallback", "WARNING")
+                fallback_plans = []
                 for scene in batch:
                     fallback_plan = {
                         "scene_id": scene.get("scene_id"),
@@ -1529,16 +1537,30 @@ Return JSON only:
                         "color_palette": "Neutral tones",
                         "key_focus": "Main subject of the scene"
                     }
-                    all_plans.append(fallback_plan)
-                self._log(f"     -> Created {len(batch)} fallback plans")
-                continue
+                    fallback_plans.append(fallback_plan)
+                return (batch_num, fallback_plans, True)  # True = fallback used
 
-            # Add to results
-            all_plans.extend(data["scene_plans"])
-            self._log(f"     -> Got {len(data['scene_plans'])} scene plans")
+            return (batch_num, data["scene_plans"], False)  # False = API success
 
-            if batch_start + BATCH_SIZE < len(director_plan):
-                time.sleep(1)
+        # Execute batches in parallel
+        batch_results = {}
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as executor:
+            future_to_batch = {executor.submit(process_single_batch, b): b[0] for b in batches}
+
+            for future in as_completed(future_to_batch):
+                batch_num = future_to_batch[future]
+                try:
+                    result_batch_num, plans, used_fallback = future.result()
+                    batch_results[result_batch_num] = plans
+                    status = "fallback" if used_fallback else "OK"
+                    self._log(f"     Batch {result_batch_num}/{total_batches}: {len(plans)} plans [{status}]")
+                except Exception as e:
+                    self._log(f"     Batch {batch_num} error: {e}", "ERROR")
+                    batch_results[batch_num] = []
+
+        # Combine results in order
+        for batch_num in sorted(batch_results.keys()):
+            all_plans.extend(batch_results[batch_num])
 
         if not all_plans:
             self._log("  ERROR: No scene plans created!", "ERROR")
@@ -1639,19 +1661,27 @@ Return JSON only:
             img_file = loc.image_file if hasattr(loc, 'image_file') and loc.image_file else f"{loc.id}.png"
             loc_image_lookup[loc.id] = img_file
 
-        # Process in batches
+        # Process in batches - PARALLEL API calls
         total_created = 0
+        MAX_PARALLEL = 4  # Max concurrent API calls
 
+        # Prepare all batches
+        all_batches = []
         for batch_start in range(0, len(pending_scenes), batch_size):
             batch = pending_scenes[batch_start:batch_start + batch_size]
             batch_num = batch_start // batch_size + 1
+            all_batches.append((batch_num, batch))
 
-            self._log(f"\n  [Batch {batch_num}] Processing {len(batch)} scenes...")
+        total_batches = len(all_batches)
+        self._log(f"  Processing {total_batches} batches in parallel (max {MAX_PARALLEL} concurrent)")
 
-            # Build batch prompt
+        def process_single_batch(batch_info):
+            """Process a single batch - called in parallel"""
+            batch_num, batch = batch_info
+
+            # Build scenes text for prompt
             scenes_text = ""
             for scene in batch:
-                # Get character/location locks VÀ image files
                 char_ids = [cid.strip() for cid in scene.get("characters_used", "").split(",") if cid.strip()]
                 char_desc_parts = []
                 char_refs = []
@@ -1668,7 +1698,6 @@ Return JSON only:
                 if loc_desc and loc_img:
                     loc_desc = f"{loc_desc} ({loc_img})"
 
-                # Lấy kế hoạch chi tiết từ step 4.5 (nếu có)
                 scene_id = scene.get('scene_id')
                 plan = scene_planning.get(scene_id, {})
                 plan_info = ""
@@ -1735,84 +1764,79 @@ Return JSON only with EXACTLY {len(batch)} scenes:
 }}
 """
 
-            # Call API - dùng temperature thấp hơn để tránh lặp/hallucination
-            response = self._call_api(prompt, temperature=0.5, max_tokens=8192)
-            if not response:
-                self._log(f"  ERROR: API call failed for batch {batch_num}!", "ERROR")
+            # Call API with retry
+            MAX_RETRIES = 3
+            for retry in range(MAX_RETRIES):
+                response = self._call_api(prompt, temperature=0.5, max_tokens=8192)
+                if response:
+                    data = self._extract_json(response)
+                    if data and "scenes" in data:
+                        return (batch_num, batch, data["scenes"], None)  # Success
+                time.sleep(2 ** retry)
+
+            return (batch_num, batch, None, "API failed")  # Failed
+
+        # Execute batches in parallel
+        batch_results = {}
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as executor:
+            future_to_batch = {executor.submit(process_single_batch, b): b[0] for b in all_batches}
+
+            for future in as_completed(future_to_batch):
+                batch_num = future_to_batch[future]
+                try:
+                    result = future.result()
+                    batch_results[result[0]] = result  # Store by batch_num
+                    status = "OK" if result[2] else "FAILED"
+                    self._log(f"     Batch {result[0]}/{total_batches}: [{status}]")
+                except Exception as e:
+                    self._log(f"     Batch {batch_num} error: {e}", "ERROR")
+
+        # Process and save results sequentially (Excel not thread-safe)
+        for batch_num in sorted(batch_results.keys()):
+            _, batch, api_scenes, error = batch_results[batch_num]
+
+            if not api_scenes:
+                self._log(f"  Batch {batch_num}: skipped ({error})", "WARNING")
                 continue
 
-            # Parse response
-            data = self._extract_json(response)
-            if not data or "scenes" not in data:
-                self._log(f"  ERROR: Could not parse batch {batch_num}!", "ERROR")
-                continue
-
-            # Validate: Check số lượng scenes trả về
-            api_scenes = data["scenes"]
+            # Validate
             if len(api_scenes) != len(batch):
-                self._log(f"  ⚠️ API trả về {len(api_scenes)} scenes, expected {len(batch)}", "WARN")
+                self._log(f"  ⚠️ Batch {batch_num}: API returned {len(api_scenes)}, expected {len(batch)}", "WARN")
 
-            # Validate: Check trùng lặp img_prompt
+            # Check duplicates
             seen_prompts = set()
-            duplicate_count = 0
-            for s in api_scenes:
-                prompt = s.get("img_prompt", "")[:100]  # Check 100 chars đầu
-                if prompt in seen_prompts:
-                    duplicate_count += 1
-                seen_prompts.add(prompt)
+            duplicate_count = sum(1 for s in api_scenes if (p := s.get("img_prompt", "")[:100]) in seen_prompts or seen_prompts.add(p))
+            if duplicate_count > len(api_scenes) * 0.5:
+                self._log(f"  Batch {batch_num}: >50% duplicates, skipped!", "ERROR")
+                continue
 
-            if duplicate_count > 0:
-                self._log(f"  ⚠️ Phát hiện {duplicate_count} prompts trùng lặp trong batch!", "WARN")
-                # Nếu >50% trùng lặp, có thể API bị lỗi - skip batch này
-                if duplicate_count > len(api_scenes) * 0.5:
-                    self._log(f"  ERROR: >50% prompts trùng lặp, skip batch!", "ERROR")
-                    continue
-
-            # Save scenes to Excel
+            # Save scenes
             try:
                 for scene_data in api_scenes:
-                    # Đảm bảo scene_id là integer (không phải 1.0, 2.0...)
-                    scene_id = scene_data.get("scene_id")
-                    scene_id = int(scene_id) if scene_id else 0
-
-                    # Find original scene from director plan
-                    # Convert to string để tránh lỗi so sánh int vs string
-                    original = next((s for s in batch if str(int(s.get("scene_id", 0))) == str(scene_id)), None)
+                    scene_id = int(scene_data.get("scene_id", 0))
+                    original = next((s for s in batch if int(s.get("scene_id", 0)) == scene_id), None)
                     if not original:
-                        self._log(f"    WARNING: scene_id {scene_id} not found in batch (batch IDs: {[s.get('scene_id') for s in batch]})", "WARN")
                         continue
 
-                    # Lấy img_prompt từ AI
                     img_prompt = scene_data.get("img_prompt", "")
 
-                    # POST-PROCESS: Đảm bảo có reference annotations
+                    # Post-process: ensure reference annotations
                     char_ids = [cid.strip() for cid in original.get("characters_used", "").split(",") if cid.strip()]
                     loc_id = original.get("location_used", "")
 
-                    # Kiểm tra và thêm character references nếu thiếu
                     for cid in char_ids:
                         img_file = char_image_lookup.get(cid, f"{cid}.png")
                         if img_file and f"({img_file})" not in img_prompt:
-                            # Thêm reference vào cuối prompt
                             img_prompt = img_prompt.rstrip(". ") + f" ({img_file})."
 
-                    # Kiểm tra và thêm location reference nếu thiếu
                     if loc_id:
                         loc_img = loc_image_lookup.get(loc_id, f"{loc_id}.png")
                         if loc_img and f"({loc_img})" not in img_prompt:
-                            # Thêm reference vào cuối prompt
                             img_prompt = img_prompt.rstrip(". ") + f" (reference: {loc_img})."
 
-                    # Build reference_files list
-                    ref_files = []
-                    for cid in char_ids:
-                        img_file = char_image_lookup.get(cid, f"{cid}.png")
-                        if img_file and img_file not in ref_files:
-                            ref_files.append(img_file)
+                    ref_files = [char_image_lookup.get(cid, f"{cid}.png") for cid in char_ids]
                     if loc_id:
-                        loc_img = loc_image_lookup.get(loc_id, f"{loc_id}.png")
-                        if loc_img and loc_img not in ref_files:
-                            ref_files.append(loc_img)
+                        ref_files.append(loc_image_lookup.get(loc_id, f"{loc_id}.png"))
 
                     scene = Scene(
                         scene_id=scene_id,
@@ -1832,11 +1856,8 @@ Return JSON only with EXACTLY {len(batch)} scenes:
                     total_created += 1
 
                 workbook.save()
-                self._log(f"  -> Saved batch {batch_num} ({len(data['scenes'])} scenes)")
-
             except Exception as e:
-                self._log(f"  ERROR: Could not save batch {batch_num}: {e}", "ERROR")
-                continue
+                self._log(f"  Batch {batch_num} save error: {e}", "ERROR")
 
         self._log(f"\n  -> Total: Created {total_created} scene prompts")
 
