@@ -4,18 +4,27 @@ VE3 Tool - Progressive Prompts Generator
 Tạo prompts theo từng step, mỗi step lưu vào Excel ngay.
 API có thể đọc context từ Excel để học từ những gì đã làm.
 
-Flow:
-    Step 1: Phân tích story → Excel (story_analysis)
-    Step 2: Tạo characters → Excel (characters)
-    Step 3: Tạo locations → Excel (locations)
-    Step 4: Tạo director_plan → Excel (director_plan)
-    Step 5-N: Tạo scenes (từng batch) → Excel (scenes)
+Flow (Top-Down Planning):
+    Step 1:   Phân tích story → Excel (story_analysis)
+    Step 1.5: Phân tích nội dung con → Excel (story_segments)
+              - Chia câu chuyện thành các phần
+              - Mỗi phần cần bao nhiêu ảnh để truyền tải
+    Step 2:   Tạo characters → Excel (characters)
+    Step 3:   Tạo locations → Excel (characters với loc_xxx)
+    Step 4:   Tạo director_plan → Excel (director_plan)
+              - Dựa vào segments để phân bổ scenes
+    Step 4.5: Lên kế hoạch chi tiết từng scene → Excel (scene_planning)
+              - Ý đồ nghệ thuật cho mỗi scene
+              - Góc máy, cảm xúc, ánh sáng
+    Step 5:   Tạo scene prompts → Excel (scenes)
+              - Đọc planning để viết prompt chính xác
 
 Lợi ích:
     - Fail recovery: Resume từ step bị fail
     - Debug: Xem Excel biết step nào sai
     - Kiểm soát: Có thể sửa Excel giữa chừng
     - Chất lượng: API đọc context từ Excel
+    - Top-down: Lên kế hoạch trước, prompt sau
 """
 
 import json
@@ -897,6 +906,165 @@ Return JSON only:
             return StepResult("create_director_plan", StepStatus.FAILED, str(e))
 
     # =========================================================================
+    # STEP 4.5: LÊN KẾ HOẠCH CHI TIẾT TỪNG SCENE
+    # =========================================================================
+
+    def step_plan_scenes(
+        self,
+        project_dir: Path,
+        code: str,
+        workbook: PromptWorkbook,
+    ) -> StepResult:
+        """
+        Step 4.5: Lên kế hoạch chi tiết cho từng scene TRƯỚC KHI viết prompt.
+
+        Mục đích: Xác định ý đồ nghệ thuật cho mỗi scene
+        - Scene này muốn truyền tải gì?
+        - Góc máy nên thế nào?
+        - Nhân vật đang làm gì, cảm xúc ra sao?
+        - Ánh sáng, màu sắc, mood?
+
+        Input: director_plan, story_segments, characters, locations
+        Output: scene_planning sheet
+        """
+        self._log("\n" + "="*60)
+        self._log("[STEP 4.5] Lên kế hoạch chi tiết từng scene...")
+        self._log("="*60)
+
+        # Check if already done
+        try:
+            existing = workbook.get_scene_planning()
+            if existing and len(existing) > 0:
+                self._log(f"  -> Đã có {len(existing)} scene plans, skip!")
+                return StepResult("plan_scenes", StepStatus.COMPLETED, "Already done")
+        except:
+            pass
+
+        # Read director plan
+        director_plan = workbook.get_director_plan()
+        if not director_plan:
+            self._log("  ERROR: No director plan! Run step 4 first.", "ERROR")
+            return StepResult("plan_scenes", StepStatus.FAILED, "No director plan")
+
+        # Read context
+        story_analysis = workbook.get_story_analysis() or {}
+        story_segments = workbook.get_story_segments() or []
+        characters = workbook.get_characters()
+        locations = workbook.get_locations()
+
+        context_lock = story_analysis.get("context_lock", "")
+
+        # Build character info
+        char_info = "\n".join([f"- {c.id}: {c.character_lock}" for c in characters if c.character_lock])
+        loc_info = "\n".join([f"- {loc.id}: {loc.location_lock}" for loc in locations if hasattr(loc, 'location_lock') and loc.location_lock])
+
+        # Build segments info
+        segments_info = ""
+        for seg in story_segments:
+            segments_info += f"- Segment {seg.get('segment_id')}: {seg.get('segment_name')} ({seg.get('message', '')[:100]})\n"
+
+        self._log(f"  Director plan: {len(director_plan)} scenes")
+        self._log(f"  Story segments: {len(story_segments)}")
+
+        # Process in batches
+        BATCH_SIZE = 15
+        all_plans = []
+
+        for batch_start in range(0, len(director_plan), BATCH_SIZE):
+            batch = director_plan[batch_start:batch_start + BATCH_SIZE]
+            batch_num = batch_start // BATCH_SIZE + 1
+
+            self._log(f"  Planning batch {batch_num}: scenes {batch_start+1}-{batch_start+len(batch)}")
+
+            # Format scenes for prompt
+            scenes_text = ""
+            for scene in batch:
+                scenes_text += f"""
+Scene {scene.get('scene_id')}:
+- Time: {scene.get('srt_start')} → {scene.get('srt_end')} ({scene.get('duration', 0):.1f}s)
+- Text: {scene.get('srt_text', '')[:200]}
+- Visual moment: {scene.get('visual_moment', '')}
+- Characters: {scene.get('characters_used', '')}
+- Location: {scene.get('location_used', '')}
+"""
+
+            prompt = f"""You are a film director planning each scene's artistic vision.
+
+STORY CONTEXT:
+{context_lock}
+
+STORY SEGMENTS (narrative structure):
+{segments_info if segments_info else 'Not specified'}
+
+CHARACTERS:
+{char_info if char_info else 'Not specified'}
+
+LOCATIONS:
+{loc_info if loc_info else 'Not specified'}
+
+SCENES TO PLAN:
+{scenes_text}
+
+For EACH scene, create an artistic plan that includes:
+1. artistic_intent: What emotion/message should this scene convey?
+2. shot_type: Camera angle and framing (close-up, medium, wide, etc.)
+3. character_action: What are characters doing? Their body language, expression?
+4. mood: Overall feeling (tense, warm, melancholic, hopeful, etc.)
+5. lighting: Type of lighting (soft, harsh, dramatic, natural, etc.)
+6. color_palette: Dominant colors for the scene
+7. key_focus: What should viewer's eye be drawn to?
+
+Return JSON only:
+{{
+    "scene_plans": [
+        {{
+            "scene_id": 1,
+            "artistic_intent": "Show the protagonist's isolation and loneliness",
+            "shot_type": "Wide shot, slowly pushing in",
+            "character_action": "Sitting alone, shoulders slumped, staring at window",
+            "mood": "Melancholic, contemplative",
+            "lighting": "Soft diffused light from window, shadows on face",
+            "color_palette": "Cool blues and grays, muted tones",
+            "key_focus": "Character's face and empty space around them"
+        }}
+    ]
+}}
+"""
+
+            # Call API
+            response = self._call_api(prompt, temperature=0.4, max_tokens=8192)
+            if not response:
+                self._log(f"  ERROR: API failed for batch {batch_num}!", "ERROR")
+                continue
+
+            # Parse response
+            data = self._extract_json(response)
+            if not data or "scene_plans" not in data:
+                self._log(f"  ERROR: Could not parse batch {batch_num}!", "ERROR")
+                continue
+
+            # Add to results
+            all_plans.extend(data["scene_plans"])
+            self._log(f"     -> Got {len(data['scene_plans'])} scene plans")
+
+            if batch_start + BATCH_SIZE < len(director_plan):
+                time.sleep(1)
+
+        if not all_plans:
+            self._log("  ERROR: No scene plans created!", "ERROR")
+            return StepResult("plan_scenes", StepStatus.FAILED, "No plans created")
+
+        # Save to Excel
+        try:
+            workbook.save_scene_planning(all_plans)
+            workbook.save()
+            self._log(f"  -> Saved {len(all_plans)} scene plans to Excel")
+            return StepResult("plan_scenes", StepStatus.COMPLETED, "Success", {"plans": all_plans})
+        except Exception as e:
+            self._log(f"  ERROR: Could not save: {e}", "ERROR")
+            return StepResult("plan_scenes", StepStatus.FAILED, str(e))
+
+    # =========================================================================
     # STEP 5: TẠO SCENE PROMPTS (BATCH)
     # =========================================================================
 
@@ -950,6 +1118,16 @@ Return JSON only:
         characters = workbook.get_characters()
         locations = workbook.get_locations()
 
+        # Đọc scene planning (kế hoạch chi tiết từ step 4.5)
+        scene_planning = {}
+        try:
+            plans = workbook.get_scene_planning() or []
+            for plan in plans:
+                scene_planning[plan.get("scene_id")] = plan
+            self._log(f"  Loaded {len(scene_planning)} scene plans from step 4.5")
+        except:
+            pass
+
         context_lock = story_analysis.get("context_lock", "")
 
         # Build character/location lookup - bao gồm cả image_file cho reference
@@ -1000,8 +1178,23 @@ Return JSON only:
                 if loc_desc and loc_img:
                     loc_desc = f"{loc_desc} ({loc_img})"
 
+                # Lấy kế hoạch chi tiết từ step 4.5 (nếu có)
+                scene_id = scene.get('scene_id')
+                plan = scene_planning.get(scene_id, {})
+                plan_info = ""
+                if plan:
+                    plan_info = f"""
+- [ARTISTIC PLAN from Step 4.5]:
+  * Intent: {plan.get('artistic_intent', '')}
+  * Shot type: {plan.get('shot_type', '')}
+  * Action: {plan.get('character_action', '')}
+  * Mood: {plan.get('mood', '')}
+  * Lighting: {plan.get('lighting', '')}
+  * Colors: {plan.get('color_palette', '')}
+  * Focus: {plan.get('key_focus', '')}"""
+
                 scenes_text += f"""
-Scene {scene.get('scene_id')}:
+Scene {scene_id}:
 - Time: {scene.get('srt_start')} --> {scene.get('srt_end')}
 - Text: {scene.get('srt_text', '')}
 - Visual moment: {scene.get('visual_moment', '')}
@@ -1010,6 +1203,7 @@ Scene {scene.get('scene_id')}:
 - Camera: {scene.get('camera', '')}
 - Lighting: {scene.get('lighting', '')}
 - Reference files: {', '.join(char_refs + ([loc_img] if loc_img else []))}
+{plan_info}
 """
 
             prompt = f"""Create detailed image prompts for these {len(batch)} scenes.
@@ -1248,7 +1442,13 @@ Return JSON only with EXACTLY {len(batch)} scenes:
             self._log("Step 4 FAILED! Stopping.", "ERROR")
             return False
 
-        # Step 5: Create scene prompts
+        # Step 4.5: Lên kế hoạch chi tiết từng scene (artistic planning)
+        result = self.step_plan_scenes(project_dir, code, workbook)
+        if result.status == StepStatus.FAILED:
+            self._log("Step 4.5 FAILED! Stopping.", "ERROR")
+            return False
+
+        # Step 5: Create scene prompts (đọc từ scene planning)
         result = self.step_create_scene_prompts(project_dir, code, workbook)
         if result.status == StepStatus.FAILED:
             self._log("Step 5 FAILED!", "ERROR")

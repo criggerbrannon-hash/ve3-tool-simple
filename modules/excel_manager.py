@@ -359,6 +359,7 @@ class PromptWorkbook:
     DIRECTOR_PLAN_SHEET = "director_plan"
     STORY_ANALYSIS_SHEET = "story_analysis"
     STORY_SEGMENTS_SHEET = "story_segments"  # Nội dung con của câu chuyện
+    SCENE_PLANNING_SHEET = "scene_planning"  # Kế hoạch chi tiết từng scene
     LOCATIONS_SHEET = "locations"
     BACKUP_CHARACTERS_SHEET = "backup_characters"
     BACKUP_LOCATIONS_SHEET = "backup_locations"
@@ -1102,6 +1103,92 @@ class PromptWorkbook:
             segments.append(seg)
 
         return segments
+
+    # ========== SCENE PLANNING SHEET ==========
+
+    def _ensure_scene_planning_sheet(self) -> None:
+        """Đảm bảo sheet scene_planning tồn tại."""
+        if self.workbook is None:
+            self.load_or_create()
+
+        if self.SCENE_PLANNING_SHEET not in self.workbook.sheetnames:
+            self._create_scene_planning_sheet()
+            self.save()
+
+    def _create_scene_planning_sheet(self) -> None:
+        """Tạo sheet scene_planning với header."""
+        ws = self.workbook.create_sheet(self.SCENE_PLANNING_SHEET)
+
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="FF6347", end_color="FF6347", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+
+        columns = [
+            "scene_id", "artistic_intent", "shot_type", "character_action",
+            "mood", "lighting", "color_palette", "key_focus"
+        ]
+        for col, column_name in enumerate(columns, start=1):
+            cell = ws.cell(row=1, column=col, value=column_name)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+
+    def save_scene_planning(self, plans: list) -> None:
+        """
+        Lưu scene planning vào Excel.
+
+        Args:
+            plans: List các plan dict từ API
+        """
+        self._ensure_scene_planning_sheet()
+        ws = self.workbook[self.SCENE_PLANNING_SHEET]
+
+        # Xóa dữ liệu cũ (giữ header)
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row)
+
+        # Thêm plans
+        for plan in plans:
+            next_row = ws.max_row + 1
+            ws.cell(row=next_row, column=1, value=int(plan.get("scene_id", 0)))
+            ws.cell(row=next_row, column=2, value=plan.get("artistic_intent", "")[:500])
+            ws.cell(row=next_row, column=3, value=plan.get("shot_type", ""))
+            ws.cell(row=next_row, column=4, value=plan.get("character_action", "")[:500])
+            ws.cell(row=next_row, column=5, value=plan.get("mood", ""))
+            ws.cell(row=next_row, column=6, value=plan.get("lighting", ""))
+            ws.cell(row=next_row, column=7, value=plan.get("color_palette", ""))
+            ws.cell(row=next_row, column=8, value=plan.get("key_focus", "")[:300])
+
+        self.logger.info(f"Saved {len(plans)} scene plans")
+
+    def get_scene_planning(self) -> list:
+        """
+        Đọc scene planning từ Excel.
+
+        Returns:
+            List các plan dict
+        """
+        self._ensure_scene_planning_sheet()
+        ws = self.workbook[self.SCENE_PLANNING_SHEET]
+
+        plans = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+
+            plan = {
+                "scene_id": int(row[0]) if row[0] else 0,
+                "artistic_intent": row[1] or "",
+                "shot_type": row[2] or "",
+                "character_action": row[3] or "",
+                "mood": row[4] or "",
+                "lighting": row[5] or "",
+                "color_palette": row[6] or "",
+                "key_focus": row[7] or "" if len(row) > 7 else ""
+            }
+            plans.append(plan)
+
+        return plans
 
     # ========== LOCATIONS SHEET ==========
 
