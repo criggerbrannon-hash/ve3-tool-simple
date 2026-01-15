@@ -431,8 +431,9 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
 
             // ============================================
             // T2V → I2V CONVERSION MODE: Convert Text-to-Video thành Image-to-Video
-            // Chrome gửi T2V request (batchAsyncGenerateVideoText) với model veo_3_1_t2v_fast
-            // Interceptor đổi thành I2V (batchAsyncGenerateVideoReferenceImages) với model veo_3_0_r2v_fast
+            // Chrome gửi T2V request (batchAsyncGenerateVideoText) với model veo_3_1_t2v_fast_landscape_ultra_relaxed
+            // Interceptor chỉ đổi: _t2v_ → _r2v_, GIỮ NGUYÊN phần còn lại
+            // Result: veo_3_1_r2v_fast_landscape_ultra_relaxed (I2V endpoint)
             // ============================================
             if (window._t2vToI2vConfig && chromeVideoBody && urlStr.includes('batchAsyncGenerateVideoText')) {
                 try {
@@ -461,26 +462,17 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                             "mediaId": t2vConfig.mediaId
                         }];
 
-                        // XÓA seed - I2V không dùng seed
-                        delete req.seed;
+                        // GIỮ seed - I2V CẦN seed (đã test thủ công OK)
+                        // delete req.seed; // KHÔNG XÓA!
 
                         // 4. Đổi model từ T2V sang I2V
-                        // T2V: veo_3_1_t2v_fast_ultra_relaxed, veo_3_1_t2v_fast_ultra
-                        // I2V ĐÚNG: veo_3_0_r2v_fast_ultra
+                        // CHỈ đổi _t2v_ → _r2v_, GIỮ NGUYÊN tất cả phần còn lại
+                        // Ví dụ: veo_3_1_t2v_fast_landscape_ultra_relaxed → veo_3_1_r2v_fast_landscape_ultra_relaxed
                         var currentModel = req.videoModelKey || 'veo_3_1_t2v_fast';
                         console.log('[T2V→I2V] Original model from Chrome:', currentModel);
 
-                        // Fix model name - QUAN TRỌNG: thứ tự replace matters!
-                        // 1. Xóa _relaxed (Chrome thêm vào cho Lower Priority)
-                        // 2. Xóa _landscape_ và _portrait_
-                        // 3. Đổi t2v → r2v
-                        // 4. Đổi veo_3_1 → veo_3_0
-                        var newModel = currentModel
-                            .replace('_relaxed', '')           // Xóa _relaxed
-                            .replace('_landscape_', '_')       // Xóa _landscape_
-                            .replace('_portrait_', '_')        // Xóa _portrait_
-                            .replace('_t2v_', '_r2v_')         // t2v → r2v (giữa 2 dấu _)
-                            .replace('veo_3_1_', 'veo_3_0_');  // 3.1 → 3.0
+                        // FIX: Chỉ đổi t2v → r2v, GIỮ _landscape_, _relaxed, veo_3_1
+                        var newModel = currentModel.replace('_t2v_', '_r2v_');
 
                         // Override nếu config có chỉ định model cụ thể
                         if (t2vConfig.videoModelKey) {
@@ -490,6 +482,7 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                         req.videoModelKey = newModel;
                         console.log('[T2V→I2V] Model converted:', currentModel, '→', newModel);
                         console.log('[T2V→I2V] MediaId:', t2vConfig.mediaId.substring(0, 50) + '...');
+                        console.log('[T2V→I2V] Seed:', req.seed);
                         console.log('[T2V→I2V] Final request:', JSON.stringify(req, null, 2));
                     }
 
@@ -4535,7 +4528,8 @@ class DrissionFlowAPI:
         4. Interceptor catch T2V request và convert sang I2V:
            - Đổi URL: batchAsyncGenerateVideoText → batchAsyncGenerateVideoReferenceImages
            - Thêm referenceImages với mediaId
-           - Đổi model: veo_3_1_t2v → veo_3_0_r2v (giữ suffix _fast_ultra)
+           - CHỈ đổi model: _t2v_ → _r2v_ (giữ nguyên _landscape_, _relaxed, veo_3_1, etc.)
+           - GIỮ seed (I2V cần seed)
         5. Chrome gửi I2V request với fresh reCAPTCHA!
 
         Args:
