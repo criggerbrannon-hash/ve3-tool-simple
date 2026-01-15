@@ -864,6 +864,7 @@ class PromptWorkbook:
             # Handle both old format (6 cols) and new format (10 cols)
             plans.append({
                 "plan_id": row[0],
+                "scene_id": row[0],  # Alias cho plan_id (step 5 dùng scene_id)
                 "srt_start": row[1] or "",
                 "srt_end": row[2] or "",
                 "duration": row[3] or 0,
