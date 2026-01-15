@@ -1503,102 +1503,154 @@ class DrissionFlowAPI:
 
     def clear_chrome_data(self) -> bool:
         """
-        Xóa dữ liệu Chrome profile (cookies, cache, localStorage...) để reset reCAPTCHA score.
+        Xóa dữ liệu Chrome bằng UI (giống Ctrl+H → Delete browsing data).
         Gọi khi gặp 403 liên tiếp nhiều lần.
 
         Returns:
             True nếu xóa thành công
         """
-        import shutil
-
         try:
-            self.log("🗑️ Clearing Chrome profile data...")
+            self.log("🗑️ Clearing Chrome data via UI...")
 
-            # Đóng Chrome trước
-            self._kill_chrome()
-            time.sleep(2)
-
-            # Tìm profile directory
-            profile_path = self.profile_dir
-            if not profile_path or not profile_path.exists():
-                self.log("⚠️ Profile directory not found", "WARN")
+            if not self.driver:
+                self.log("⚠️ Chrome chưa mở, không thể clear data", "WARN")
                 return False
 
-            # Xóa các folder chứa data (giữ lại folder gốc)
-            # Chrome Portable không có folder "Default", data nằm trực tiếp trong profile
-            folders_to_clear = [
-                # Chrome Portable structure (direct in profile)
-                "Cache",
-                "Code Cache",
-                "GPUCache",
-                "Cookies",
-                "Cookies-journal",
-                "Local Storage",
-                "Session Storage",
-                "IndexedDB",
-                "Service Worker",
-                "Web Data",
-                "Web Data-journal",
-                "History",
-                "History-journal",
-                "Visited Links",
-                "Login Data",
-                "Login Data-journal",
-                "GrShaderCache",
-                "ShaderCache",
-                # Standard Chrome structure (with Default/)
-                "Default/Cache",
-                "Default/Code Cache",
-                "Default/GPUCache",
-                "Default/Cookies",
-                "Default/Cookies-journal",
-                "Default/Local Storage",
-                "Default/Session Storage",
-                "Default/IndexedDB",
-                "Default/Service Worker",
-                "Default/Web Data",
-                "Default/Web Data-journal",
-                "Default/History",
-                "Default/History-journal",
-                "Default/Visited Links",
-                "Default/Login Data",
-                "Default/Login Data-journal",
-            ]
+            # Mở trang Clear browsing data
+            self.driver.get("chrome://settings/clearBrowserData")
+            time.sleep(2)
 
-            self.log(f"  Profile path: {profile_path}")
+            # JS để click "All time" và "Delete from this device"
+            JS_CLEAR_DATA = """
+            (function() {
+                // Tìm trong shadow DOM của settings page
+                function queryShadow(root, selector) {
+                    if (!root) return null;
+                    let el = root.querySelector(selector);
+                    if (el) return el;
 
-            # Log các file/folder có trong profile để debug
+                    // Tìm trong shadow roots
+                    const elements = root.querySelectorAll('*');
+                    for (let i = 0; i < elements.length; i++) {
+                        if (elements[i].shadowRoot) {
+                            el = queryShadow(elements[i].shadowRoot, selector);
+                            if (el) return el;
+                        }
+                    }
+                    return null;
+                }
+
+                function findInShadow(selector) {
+                    return queryShadow(document, selector);
+                }
+
+                // Click "All time" tab
+                let allTimeTab = findInShadow('[data-value="4"]');  // 4 = All time
+                if (!allTimeTab) {
+                    // Thử tìm bằng text
+                    const tabs = document.querySelectorAll('cr-tabs');
+                    for (let tab of tabs) {
+                        if (tab.shadowRoot) {
+                            const items = tab.shadowRoot.querySelectorAll('.tab');
+                            for (let item of items) {
+                                if (item.textContent.includes('All time')) {
+                                    item.click();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (allTimeTab) allTimeTab.click();
+
+                return 'SETUP';
+            })();
+            """
+
+            JS_CLICK_DELETE = """
+            (function() {
+                function queryShadow(root, selector) {
+                    if (!root) return null;
+                    let el = root.querySelector(selector);
+                    if (el) return el;
+                    const elements = root.querySelectorAll('*');
+                    for (let i = 0; i < elements.length; i++) {
+                        if (elements[i].shadowRoot) {
+                            el = queryShadow(elements[i].shadowRoot, selector);
+                            if (el) return el;
+                        }
+                    }
+                    return null;
+                }
+
+                // Tìm button "Delete from this device" hoặc "Clear data"
+                let deleteBtn = queryShadow(document, '#clearBrowsingDataConfirm');
+                if (!deleteBtn) {
+                    deleteBtn = queryShadow(document, '[id*="clearBrowsingData"]');
+                }
+                if (!deleteBtn) {
+                    // Tìm bằng text
+                    const buttons = document.querySelectorAll('cr-button');
+                    for (let btn of buttons) {
+                        if (btn.textContent.includes('Delete') || btn.textContent.includes('Clear')) {
+                            deleteBtn = btn;
+                            break;
+                        }
+                    }
+                }
+
+                if (deleteBtn) {
+                    deleteBtn.click();
+                    return 'CLICKED';
+                }
+                return 'NOT_FOUND';
+            })();
+            """
+
+            # Setup - click All time
             try:
-                items_in_profile = list(profile_path.iterdir())
-                self.log(f"  Found {len(items_in_profile)} items in profile")
-            except:
-                pass
+                self.driver.run_js(JS_CLEAR_DATA)
+                time.sleep(1)
+            except Exception as e:
+                self.log(f"  JS setup error: {e}")
 
-            cleared = 0
-            for folder in folders_to_clear:
-                target = profile_path / folder
-                if target.exists():
-                    try:
-                        if target.is_dir():
-                            shutil.rmtree(target)
-                            self.log(f"  🗑️ Deleted dir: {folder}")
-                        else:
-                            target.unlink()
-                            self.log(f"  🗑️ Deleted file: {folder}")
-                        cleared += 1
-                    except Exception as e:
-                        self.log(f"  ⚠️ Cannot delete {folder}: {e}")
+            # Click Delete button
+            for attempt in range(5):
+                try:
+                    result = self.driver.run_js(JS_CLICK_DELETE)
+                    if result == 'CLICKED':
+                        self.log("✓ Clicked 'Delete from this device'")
+                        time.sleep(3)  # Đợi xóa xong
 
-            self.log(f"✓ Cleared {cleared} items from Chrome profile")
-            if cleared > 0:
-                self.log("⚠️ Cần login lại Google sau khi restart Chrome!")
-            else:
-                self.log("⚠️ Không xóa được gì - kiểm tra profile path!")
+                        # Reset flags
+                        self._t2v_mode_selected = False
+                        self.log("✓ Chrome data cleared!")
+                        self.log("⚠️ Cần login lại Google!")
+                        return True
+                    else:
+                        self.log(f"  Attempt {attempt+1}: {result}")
+                        time.sleep(1)
+                except Exception as e:
+                    self.log(f"  Attempt {attempt+1} error: {e}")
+                    time.sleep(1)
 
-            # Reset flags
-            self._t2v_mode_selected = False
+            # Fallback: Thử dùng keyboard shortcut
+            self.log("  Trying keyboard shortcut...")
+            try:
+                from DrissionPage.common import Keys
+                # Ctrl+Shift+Delete để mở clear data dialog
+                self.driver.actions.key_down(Keys.CTRL).key_down(Keys.SHIFT).send_keys(Keys.DELETE).key_up(Keys.SHIFT).key_up(Keys.CTRL)
+                time.sleep(2)
+                # Enter để confirm
+                self.driver.actions.send_keys(Keys.ENTER)
+                time.sleep(3)
+                self.log("✓ Chrome data cleared (keyboard)!")
+                return True
+            except Exception as e:
+                self.log(f"  Keyboard shortcut failed: {e}")
 
-            return True
+            self.log("⚠️ Could not clear Chrome data via UI", "WARN")
+            return False
 
         except Exception as e:
             self.log(f"✗ Clear Chrome data failed: {e}", "ERROR")
