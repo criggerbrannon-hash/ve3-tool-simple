@@ -2129,9 +2129,9 @@ class DrissionFlowAPI:
 
     def _wait_for_textarea_visible(self, timeout: int = None, max_refresh: int = 3) -> bool:
         """
-        Đợi textarea xuất hiện trước khi click.
+        Đợi textarea xuất hiện VÀ có thể tương tác.
         Textarea là dấu hiệu page đã load xong.
-        IPv6 cần thời gian lâu hơn - tự động F5 nếu không thấy.
+        PHẢI verify textarea thật sự visible, không chỉ có trong DOM.
         """
         # IPv6 cần timeout dài hơn
         if timeout is None:
@@ -2140,20 +2140,40 @@ class DrissionFlowAPI:
         for refresh_count in range(max_refresh + 1):
             self.log(f"[TEXTAREA] Đợi textarea... (timeout={timeout}s, lần {refresh_count + 1}/{max_refresh + 1})")
 
-            try:
-                # Dùng DrissionPage tìm textarea
-                textarea = self.driver.ele('tag:textarea', timeout=timeout)
-                if textarea:
-                    self.log(f"[TEXTAREA] ✓ Tìm thấy textarea")
-                    # Đợi thêm để chắc chắn có thể tương tác
-                    time.sleep(1 if getattr(self, '_ipv6_activated', False) else 0.5)
-                    return True
-            except Exception as e:
-                self.log(f"[TEXTAREA] Chưa thấy: {e}")
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                try:
+                    # Tìm textarea
+                    textarea = self.driver.ele('tag:textarea', timeout=2)
+                    if textarea:
+                        # === VERIFY: Textarea phải THẬT SỰ visible và có thể tương tác ===
+                        try:
+                            # Check 1: Element phải displayed
+                            is_displayed = textarea.states.is_displayed
+                            if not is_displayed:
+                                time.sleep(0.5)
+                                continue
+
+                            # Check 2: Thử click vào textarea để verify có thể tương tác
+                            textarea.click()
+                            time.sleep(0.3)
+
+                            # Check 3: Verify textarea vẫn còn sau khi click (page không bị redirect)
+                            verify = self.driver.ele('tag:textarea', timeout=1)
+                            if verify:
+                                self.log(f"[TEXTAREA] ✓ Textarea visible và interactive!")
+                                return True
+                        except Exception as verify_err:
+                            self.log(f"[TEXTAREA] Element found but not ready: {verify_err}")
+                            time.sleep(0.5)
+                            continue
+                except Exception as e:
+                    pass
+                time.sleep(0.5)
 
             # Timeout - thử F5 refresh nếu còn lượt
             if refresh_count < max_refresh:
-                self.log(f"[TEXTAREA] ⚠️ Không thấy textarea, F5 refresh...")
+                self.log(f"[TEXTAREA] ⚠️ Không thấy textarea sẵn sàng, F5 refresh...")
                 try:
                     self.driver.refresh()
                     # IPv6 cần đợi lâu hơn sau F5
