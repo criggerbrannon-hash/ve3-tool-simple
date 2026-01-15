@@ -4667,10 +4667,12 @@ class DrissionFlowAPI:
             )
 
             if success:
+                # Reset all error counters on success
                 if self._consecutive_403 > 0 or getattr(self, '_cleared_data_for_403', False):
                     self.log(f"[T2V→I2V] Reset 403 counter (was {self._consecutive_403})")
                     self._consecutive_403 = 0
                     self._cleared_data_for_403 = False
+                self._timeout_count = 0  # Reset timeout counter
                 return True, result, None
 
             if error:
@@ -4722,20 +4724,32 @@ class DrissionFlowAPI:
                     else:
                         return False, None, "Không restart được Chrome sau 403"
 
-                # === TIMEOUT ERROR ===
+                # === TIMEOUT ERROR: Reset + retry 1 lần → skip ===
                 if "timeout" in str(error).lower():
-                    self.log(f"[T2V→I2V] ⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
-                    self._kill_chrome()
-                    self.close()
-                    time.sleep(2)
+                    # Đếm số lần timeout liên tiếp
+                    timeout_count = getattr(self, '_timeout_count', 0) + 1
+                    self._timeout_count = timeout_count
 
-                    if self._use_webshare and self._webshare_proxy:
-                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "T2V Timeout")
-                        self.log(f"[T2V→I2V] → Webshare rotate: {msg}", "WARN")
+                    self.log(f"[T2V→I2V] ⚠️ Timeout error (lần {timeout_count}) - Reset Chrome...", "WARN")
 
-                    if attempt < max_retries - 1:
+                    if timeout_count == 1:
+                        # LẦN 1: Reset Chrome và retry
+                        self.log("[T2V→I2V] → Reset Chrome + retry 1 lần...")
+                        self._kill_chrome()
+                        self.close()
+                        time.sleep(2)
+
+                        if self._use_webshare and self._webshare_proxy:
+                            success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "T2V Timeout")
+                            self.log(f"[T2V→I2V] → Webshare rotate: {msg}", "WARN")
+
                         if self.restart_chrome():
-                            continue
+                            continue  # Retry 1 lần
+                    else:
+                        # LẦN 2+: Skip sang prompt khác
+                        self.log("[T2V→I2V] → Timeout 2 lần → SKIP sang prompt khác!", "WARN")
+                        self._timeout_count = 0  # Reset counter
+                        return False, None, "Timeout 2 lần - skip prompt"
 
                 # === 400 ERROR: Invalid argument - có thể do mediaId hết hạn hoặc payload sai ===
                 if "400" in str(error):
@@ -4846,6 +4860,23 @@ class DrissionFlowAPI:
             self.log("[T2V→I2V] ✓ Mode/Model đã chọn - các video sau sẽ không chọn lại")
         else:
             self.log("[T2V→I2V] Mode/Model đã sẵn sàng (giữ từ lần trước)")
+
+        # 1.5. F5 REFRESH TRƯỚC MỖI PROMPT để tránh 403
+        # Sau F5: mode/model vẫn giữ, chỉ cần re-inject interceptor
+        self.log("[T2V→I2V] 🔄 F5 refresh trước khi gửi prompt...")
+        try:
+            self.driver.refresh()
+            time.sleep(3)  # Đợi page load
+
+            # Re-inject interceptor sau F5 (bị mất sau refresh)
+            self.driver.run_js(JS_INTERCEPTOR)
+            self.log("[T2V→I2V] ✓ Page refreshed + Interceptor re-injected")
+
+            # Đợi textarea xuất hiện
+            if not self._wait_for_textarea_visible(timeout=30, max_refresh=1):
+                self.log("[T2V→I2V] ⚠️ Textarea không xuất hiện sau F5", "WARN")
+        except Exception as e:
+            self.log(f"[T2V→I2V] ⚠️ F5 refresh error: {e}", "WARN")
 
         # 2. Reset video state
         self.driver.run_js("""
