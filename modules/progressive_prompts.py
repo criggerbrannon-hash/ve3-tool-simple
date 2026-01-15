@@ -386,9 +386,15 @@ Return JSON only:
             self._log(f"  -> Saved story_analysis to Excel")
             self._log(f"     Setting: {data.get('setting', {}).get('era', 'N/A')}, {data.get('setting', {}).get('location', 'N/A')}")
             self._log(f"     Context: {data.get('context_lock', 'N/A')[:80]}...")
+
+            # TRACKING: Cập nhật trạng thái
+            workbook.update_step_status("step_1", "COMPLETED", 1, 1,
+                f"context_lock: {data.get('context_lock', '')[:50]}...")
+
             return StepResult("analyze_story", StepStatus.COMPLETED, "Success", data)
         except Exception as e:
             self._log(f"  ERROR: Could not save to Excel: {e}", "ERROR")
+            workbook.update_step_status("step_1", "ERROR", 0, 0, str(e)[:100])
             return StepResult("analyze_story", StepStatus.FAILED, str(e))
 
     # =========================================================================
@@ -595,12 +601,23 @@ Return JSON only:
             self._log(f"\n  📊 SRT COVERAGE (sau Step 1.5):")
             self._log(f"     Total SRT: {coverage['total_srt']}")
             self._log(f"     Covered by segments: {coverage['covered_by_segment']} ({coverage['coverage_percent']}%)")
+
+            # Determine status based on coverage
             if coverage['uncovered'] > 0:
                 self._log(f"     ⚠️ UNCOVERED: {coverage['uncovered']} entries", "WARN")
+                status = "PARTIAL" if coverage['coverage_percent'] >= 50 else "ERROR"
+                workbook.update_step_status("step_1.5", status,
+                    coverage['total_srt'], coverage['covered_by_segment'],
+                    f"{len(data['segments'])} segments, {coverage['uncovered']} SRT uncovered")
+            else:
+                workbook.update_step_status("step_1.5", "COMPLETED",
+                    coverage['total_srt'], coverage['covered_by_segment'],
+                    f"{len(data['segments'])} segments, {total_images} images planned")
 
             return StepResult("analyze_story_segments", StepStatus.COMPLETED, "Success", data)
         except Exception as e:
             self._log(f"  ERROR: Could not save to Excel: {e}", "ERROR")
+            workbook.update_step_status("step_1.5", "ERROR", 0, 0, str(e)[:100])
             return StepResult("analyze_story_segments", StepStatus.FAILED, str(e))
 
     # =========================================================================
@@ -1192,15 +1209,28 @@ Return JSON only:
             self._log(f"\n  📊 SRT COVERAGE (sau Step 4):")
             self._log(f"     Total SRT: {coverage['total_srt']}")
             self._log(f"     Covered by scenes: {coverage['covered_by_scene']} ({coverage['coverage_percent']}%)")
+
+            total_duration = sum(s.get('duration', 0) for s in all_scenes)
+
+            # Determine status based on coverage
             if coverage['uncovered'] > 0:
                 self._log(f"     ⚠️ UNCOVERED: {coverage['uncovered']} entries", "WARN")
                 uncovered_list = workbook.get_uncovered_srt_entries()
                 if uncovered_list:
                     self._log(f"     Missing SRT: {[u['srt_index'] for u in uncovered_list[:10]]}...")
+                status = "PARTIAL" if coverage['coverage_percent'] >= 80 else "ERROR"
+                workbook.update_step_status("step_4", status,
+                    coverage['total_srt'], coverage['covered_by_scene'],
+                    f"{len(all_scenes)} scenes, {total_duration:.0f}s, {coverage['uncovered']} SRT uncovered")
+            else:
+                workbook.update_step_status("step_4", "COMPLETED",
+                    coverage['total_srt'], coverage['covered_by_scene'],
+                    f"{len(all_scenes)} scenes, {total_duration:.0f}s total")
 
             return StepResult("create_director_plan", StepStatus.COMPLETED, "Success", {"scenes": all_scenes})
         except Exception as e:
             self._log(f"  ERROR: Could not save to Excel: {e}", "ERROR")
+            workbook.update_step_status("step_4", "ERROR", 0, 0, str(e)[:100])
             return StepResult("create_director_plan", StepStatus.FAILED, str(e))
 
     # =========================================================================

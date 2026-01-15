@@ -364,7 +364,19 @@ class PromptWorkbook:
     BACKUP_CHARACTERS_SHEET = "backup_characters"
     BACKUP_LOCATIONS_SHEET = "backup_locations"
     SRT_COVERAGE_SHEET = "srt_coverage"  # Đối chiếu SRT entries với segments/scenes
-    
+    PROCESSING_STATUS_SHEET = "processing_status"  # Trạng thái xử lý từng step
+
+    # Step definitions for tracking
+    STEPS = [
+        ("step_1", "Story Analysis", "Phân tích tổng quan câu chuyện"),
+        ("step_1.5", "Story Segments", "Chia câu chuyện thành segments"),
+        ("step_2", "Characters", "Tạo danh sách nhân vật"),
+        ("step_3", "Locations", "Tạo danh sách bối cảnh"),
+        ("step_4", "Director Plan", "Tạo kế hoạch đạo diễn"),
+        ("step_4.5", "Scene Planning", "Lên ý đồ nghệ thuật"),
+        ("step_5", "Scene Prompts", "Tạo prompts cho từng scene"),
+    ]
+
     def __init__(self, path: Union[str, Path]):
         """
         Khởi tạo PromptWorkbook.
@@ -1767,6 +1779,179 @@ class PromptWorkbook:
                 })
 
         return uncovered
+
+    # ========================================================================
+    # PROCESSING STATUS - Theo dõi trạng thái từng step
+    # ========================================================================
+
+    def _ensure_processing_status_sheet(self) -> None:
+        """Tạo sheet processing_status nếu chưa có."""
+        if self.PROCESSING_STATUS_SHEET not in self.workbook.sheetnames:
+            ws = self.workbook.create_sheet(self.PROCESSING_STATUS_SHEET)
+            headers = [
+                "step_id", "step_name", "description", "status",
+                "items_total", "items_done", "coverage_pct", "notes", "last_updated"
+            ]
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="1565C0", end_color="1565C0", fill_type="solid")
+
+            for col, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+
+            # Initialize all steps
+            for i, (step_id, step_name, desc) in enumerate(self.STEPS, 2):
+                ws.cell(row=i, column=1, value=step_id)
+                ws.cell(row=i, column=2, value=step_name)
+                ws.cell(row=i, column=3, value=desc)
+                ws.cell(row=i, column=4, value="PENDING")
+                ws.cell(row=i, column=5, value=0)
+                ws.cell(row=i, column=6, value=0)
+                ws.cell(row=i, column=7, value=0)
+                ws.cell(row=i, column=8, value="")
+                ws.cell(row=i, column=9, value="")
+
+            # Set column widths
+            ws.column_dimensions['A'].width = 10
+            ws.column_dimensions['B'].width = 18
+            ws.column_dimensions['C'].width = 35
+            ws.column_dimensions['D'].width = 12
+            ws.column_dimensions['E'].width = 12
+            ws.column_dimensions['F'].width = 12
+            ws.column_dimensions['G'].width = 12
+            ws.column_dimensions['H'].width = 50
+            ws.column_dimensions['I'].width = 20
+
+    def update_step_status(self, step_id: str, status: str, items_total: int = 0,
+                           items_done: int = 0, notes: str = "") -> None:
+        """
+        Cập nhật trạng thái của một step.
+
+        Args:
+            step_id: ID của step (step_1, step_1.5, etc.)
+            status: PENDING, IN_PROGRESS, COMPLETED, PARTIAL, ERROR
+            items_total: Tổng số items cần xử lý
+            items_done: Số items đã xong
+            notes: Ghi chú
+        """
+        from datetime import datetime
+
+        self._ensure_processing_status_sheet()
+        ws = self.workbook[self.PROCESSING_STATUS_SHEET]
+
+        # Color mapping
+        status_colors = {
+            "PENDING": "E0E0E0",      # Gray
+            "IN_PROGRESS": "FFF9C4",  # Yellow
+            "COMPLETED": "C8E6C9",    # Green
+            "PARTIAL": "FFE0B2",      # Orange
+            "ERROR": "FFCDD2"         # Red
+        }
+
+        # Find the row for this step
+        for row in range(2, ws.max_row + 1):
+            if ws.cell(row=row, column=1).value == step_id:
+                ws.cell(row=row, column=4, value=status)
+                ws.cell(row=row, column=4).fill = PatternFill(
+                    start_color=status_colors.get(status, "FFFFFF"),
+                    end_color=status_colors.get(status, "FFFFFF"),
+                    fill_type="solid"
+                )
+                ws.cell(row=row, column=5, value=items_total)
+                ws.cell(row=row, column=6, value=items_done)
+
+                # Calculate coverage percentage
+                coverage = (items_done / items_total * 100) if items_total > 0 else 0
+                ws.cell(row=row, column=7, value=round(coverage, 1))
+
+                # Add notes
+                if notes:
+                    existing_notes = ws.cell(row=row, column=8).value or ""
+                    if existing_notes and notes not in existing_notes:
+                        notes = f"{existing_notes}; {notes}"
+                    ws.cell(row=row, column=8, value=notes[:500])  # Limit notes length
+
+                ws.cell(row=row, column=9, value=datetime.now().strftime("%Y-%m-%d %H:%M"))
+                break
+
+        self.save()
+
+    def get_step_status(self, step_id: str) -> dict:
+        """Lấy trạng thái của một step."""
+        self._ensure_processing_status_sheet()
+        ws = self.workbook[self.PROCESSING_STATUS_SHEET]
+
+        for row in range(2, ws.max_row + 1):
+            if ws.cell(row=row, column=1).value == step_id:
+                return {
+                    "step_id": step_id,
+                    "step_name": ws.cell(row=row, column=2).value,
+                    "status": ws.cell(row=row, column=4).value,
+                    "items_total": ws.cell(row=row, column=5).value or 0,
+                    "items_done": ws.cell(row=row, column=6).value or 0,
+                    "coverage_pct": ws.cell(row=row, column=7).value or 0,
+                    "notes": ws.cell(row=row, column=8).value or "",
+                    "last_updated": ws.cell(row=row, column=9).value or ""
+                }
+        return {}
+
+    def get_all_step_status(self) -> list:
+        """Lấy trạng thái của tất cả steps."""
+        self._ensure_processing_status_sheet()
+        ws = self.workbook[self.PROCESSING_STATUS_SHEET]
+
+        statuses = []
+        for row in range(2, ws.max_row + 1):
+            step_id = ws.cell(row=row, column=1).value
+            if step_id:
+                statuses.append({
+                    "step_id": step_id,
+                    "step_name": ws.cell(row=row, column=2).value,
+                    "status": ws.cell(row=row, column=4).value,
+                    "items_total": ws.cell(row=row, column=5).value or 0,
+                    "items_done": ws.cell(row=row, column=6).value or 0,
+                    "coverage_pct": ws.cell(row=row, column=7).value or 0,
+                    "notes": ws.cell(row=row, column=8).value or ""
+                })
+        return statuses
+
+    def get_incomplete_steps(self) -> list:
+        """Lấy danh sách các steps chưa hoàn thành (PARTIAL hoặc ERROR)."""
+        statuses = self.get_all_step_status()
+        return [s for s in statuses if s["status"] in ("PENDING", "PARTIAL", "ERROR", "IN_PROGRESS")]
+
+    def get_processing_summary(self) -> dict:
+        """
+        Lấy tổng hợp trạng thái xử lý.
+
+        Returns:
+            Dict với thông tin tổng quan
+        """
+        statuses = self.get_all_step_status()
+
+        completed = sum(1 for s in statuses if s["status"] == "COMPLETED")
+        partial = sum(1 for s in statuses if s["status"] == "PARTIAL")
+        pending = sum(1 for s in statuses if s["status"] == "PENDING")
+        error = sum(1 for s in statuses if s["status"] == "ERROR")
+
+        # Get SRT coverage if available
+        srt_summary = {}
+        try:
+            srt_summary = self.get_srt_coverage_summary()
+        except:
+            pass
+
+        return {
+            "total_steps": len(statuses),
+            "completed": completed,
+            "partial": partial,
+            "pending": pending,
+            "error": error,
+            "completion_pct": round(completed / len(statuses) * 100, 1) if statuses else 0,
+            "srt_coverage": srt_summary,
+            "needs_attention": [s for s in statuses if s["status"] in ("PARTIAL", "ERROR")]
+        }
 
     # ========================================================================
     # UTILITY METHODS
