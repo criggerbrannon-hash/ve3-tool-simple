@@ -3377,32 +3377,30 @@ class DrissionFlowAPI:
                     else:
                         return False, [], "Không restart được Chrome sau 403"
 
-                # === TIMEOUT ERROR: Có thể do prompt vi phạm policy → SKIP sang prompt khác ===
+                # === TIMEOUT ERROR: Reset Chrome và retry ===
                 if "timeout" in error.lower():
-                    self.log(f"⚠️ Timeout - có thể do policy violation → SKIP prompt này", "WARN")
-                    self.log(f"  → Chuyển sang prompt khác, RETRY PHASE sẽ thử lại sau")
-                    # KHÔNG retry, return ngay để chuyển sang prompt khác
-                    return False, [], f"Timeout (có thể policy) - skip"
+                    self.log(f"⚠️ Timeout (attempt {attempt+1}/{effective_max_retries}) - RESET CHROME!", "WARN")
 
-                    # === DIRECT PROXY LIST MODE ===
+                    # Kill và restart Chrome
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(2)
+
+                    # Đổi proxy nếu có
                     if self._use_webshare and self._webshare_proxy:
-                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "Timeout")
-                        self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
+                        success_rotate, msg = self._webshare_proxy.rotate_ip(self.worker_id, "Timeout")
+                        self.log(f"  → Webshare rotate: {msg}", "WARN")
 
-                        if success and attempt < max_retries - 1:
-                            self.log("  → Restart Chrome với IP mới...")
-                            time.sleep(3)
-                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
-                                continue
-                            else:
-                                return False, [], "Không restart được Chrome sau khi đổi proxy"
-
-                    if attempt < max_retries - 1:
-                        self.log(f"  → Đợi 5s rồi retry...", "WARN")
-                        time.sleep(5)
-                        if self.setup(project_url=getattr(self, '_current_project_url', None)):
+                    # Retry nếu còn lượt
+                    if attempt < effective_max_retries - 1:
+                        if self.restart_chrome():
+                            self.log("  → Chrome restarted, tiếp tục...")
+                            attempt += 1
                             continue
-                    return False, [], error
+                        else:
+                            return False, [], "Không restart được Chrome sau timeout"
+
+                    return False, [], f"Timeout sau {effective_max_retries} lần retry"
 
                 # Lỗi khác, không retry
                 return False, [], error
