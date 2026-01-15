@@ -223,105 +223,26 @@ def process_project_pic_basic(code: str, callback=None) -> bool:
             log(f"  Failed to recreate Excel, skip!", "ERROR")
             return False
 
-    # Step 4: Create images - NO IP ROTATION (use local IP)
+    # Step 4: Create images using SmartEngine (same as worker_pic)
+    # Basic mode just means we created Excel with segment-based approach
+    # Image generation uses the same SmartEngine
     try:
-        import yaml
-        from modules.drission_flow_api import DrissionFlowAPI
-        from modules.excel_manager import PromptWorkbook
+        from modules.smart_engine import SmartEngine
 
-        # Load config
-        config = {}
-        config_path = TOOL_DIR / "config" / "settings.yaml"
-        if config_path.exists():
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
-
-        # Load workbook
-        wb = PromptWorkbook(str(excel_path))
-        scenes = wb.get_scenes()
-        characters = wb.get_characters()
-
-        # Filter scenes and characters that need images
-        pending_scenes = [s for s in scenes if s.img_prompt and s.status_img == "pending"]
-        pending_chars = [c for c in characters if c.english_prompt and c.status == "pending"]
+        engine = SmartEngine(
+            worker_id=0,
+            total_workers=1
+        )
 
         log(f"  Excel: {excel_path.name}")
-        log(f"  Mode: BASIC (no IP rotation)")
-        log(f"  Pending: {len(pending_chars)} characters, {len(pending_scenes)} scenes")
+        log(f"  Mode: BASIC (segment-based prompts)")
 
-        if not pending_chars and not pending_scenes:
-            log(f"  Nothing to generate!")
-            return True
+        # Run engine - images only, skip video generation
+        result = engine.run(str(excel_path), callback=callback, skip_compose=True, skip_video=True)
 
-        # Create DrissionFlowAPI (no proxy)
-        flow = DrissionFlowAPI(config)
-        flow.log_callback = callback
-
-        # Generate character images first
-        if pending_chars:
-            log(f"\n  Generating {len(pending_chars)} character images...")
-            img_dir = local_dir / "img"
-            img_dir.mkdir(exist_ok=True)
-
-            for char in pending_chars:
-                if char.status == "skip":
-                    continue
-
-                log(f"    -> {char.id}: {char.name}")
-
-                # Generate image
-                result = flow.generate_image(
-                    prompt=char.english_prompt,
-                    output_path=str(img_dir / char.image_file),
-                    reference_images=[]
-                )
-
-                if result:
-                    char.status = "done"
-                    wb.update_character(char)
-                    wb.save()
-                else:
-                    log(f"       Failed!", "ERROR")
-
-        # Generate scene images
-        if pending_scenes:
-            log(f"\n  Generating {len(pending_scenes)} scene images...")
-            img_dir = local_dir / "img"
-            img_dir.mkdir(exist_ok=True)
-
-            for scene in pending_scenes:
-                log(f"    -> Scene {scene.scene_id}")
-
-                # Get reference images
-                ref_images = []
-                if scene.reference_files:
-                    import json
-                    try:
-                        refs = json.loads(scene.reference_files) if isinstance(scene.reference_files, str) else scene.reference_files
-                        for ref in refs:
-                            ref_path = img_dir / ref
-                            if ref_path.exists():
-                                ref_images.append(str(ref_path))
-                    except:
-                        pass
-
-                # Generate image
-                output_file = f"scene_{scene.scene_id:03d}.png"
-                result = flow.generate_image(
-                    prompt=scene.img_prompt,
-                    output_path=str(img_dir / output_file),
-                    reference_images=ref_images
-                )
-
-                if result:
-                    scene.status_img = "done"
-                    wb.update_scene(scene)
-                    wb.save()
-                else:
-                    log(f"       Failed!", "ERROR")
-
-        # Close browser
-        flow.close()
+        if result.get('error'):
+            log(f"  Error: {result.get('error')}", "ERROR")
+            return False
 
     except Exception as e:
         log(f"  Exception: {e}", "ERROR")
