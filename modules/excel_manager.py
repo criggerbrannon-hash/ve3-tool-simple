@@ -1044,28 +1044,27 @@ class PromptWorkbook:
 
     def get_locations(self) -> List["Location"]:
         """
-        Đọc tất cả locations từ sheet locations.
+        Đọc locations từ sheet characters (role="location" hoặc id bắt đầu bằng "loc_").
 
         Returns:
             List[Location]
         """
-        self._ensure_locations_sheet()
-        ws = self.workbook[self.LOCATIONS_SHEET]
+        # Đọc từ characters sheet thay vì locations sheet riêng
+        characters = self.get_characters()
 
         locations = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if row[0] is None:
-                continue
-
-            loc = Location(
-                id=row[0] or "",
-                name=row[1] or "",
-                english_prompt=row[2] or "",
-                location_lock=row[3] or "" if len(row) > 3 else "",
-                lighting_default=row[4] or "" if len(row) > 4 else "",
-                image_file=row[5] or "" if len(row) > 5 else "",
-            )
-            locations.append(loc)
+        for char in characters:
+            # Check nếu là location (role="location" hoặc id bắt đầu bằng "loc_")
+            if char.role == "location" or (char.id and char.id.startswith("loc_")):
+                loc = Location(
+                    id=char.id,
+                    name=char.name,
+                    english_prompt=char.english_prompt,
+                    location_lock=char.character_lock,  # character_lock chứa location_lock
+                    lighting_default=char.vietnamese_prompt,  # vietnamese_prompt chứa lighting_default
+                    image_file=char.image_file,
+                )
+                locations.append(loc)
 
         return locations
 

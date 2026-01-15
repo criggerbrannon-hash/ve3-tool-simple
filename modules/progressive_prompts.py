@@ -496,22 +496,29 @@ Return JSON only:
             self._log("  ERROR: Could not parse locations!", "ERROR")
             return StepResult("create_locations", StepStatus.FAILED, "JSON parse failed")
 
-        # Save to Excel
+        # Save to Excel - LƯU VÀO SHEET CHARACTERS với id loc_xxx
         try:
             for loc_data in data["locations"]:
                 loc_id = loc_data.get("id", "")
-                loc = Location(
+                # Đảm bảo id bắt đầu bằng "loc_"
+                if not loc_id.startswith("loc_"):
+                    loc_id = f"loc_{loc_id}"
+
+                # Tạo Character với role="location" thay vì Location riêng
+                loc_char = Character(
                     id=loc_id,
                     name=loc_data.get("name", ""),
+                    role="location",  # Đánh dấu là location
                     english_prompt=loc_data.get("location_prompt", ""),
-                    location_lock=loc_data.get("location_lock", ""),
-                    lighting_default=loc_data.get("lighting_default", ""),
-                    image_file=f"{loc_id}.png",  # Gán image_file = {id}.png
+                    character_lock=loc_data.get("location_lock", ""),
+                    vietnamese_prompt=loc_data.get("lighting_default", ""),  # Dùng field này cho lighting
+                    image_file=f"{loc_id}.png",
+                    status="pending",
                 )
-                workbook.add_location(loc)
+                workbook.add_character(loc_char)  # Thêm vào characters sheet
 
             workbook.save()
-            self._log(f"  -> Saved {len(data['locations'])} locations to Excel")
+            self._log(f"  -> Saved {len(data['locations'])} locations to characters sheet")
             for loc in data["locations"][:3]:
                 self._log(f"     - {loc.get('name', 'N/A')}")
 
@@ -536,6 +543,8 @@ Return JSON only:
 
         Input: Đọc story_analysis, characters, locations từ Excel
         Output sheet: director_plan
+
+        Xử lý SRT dài bằng cách chia batch để không bị cắt.
         """
         self._log("\n" + "="*60)
         self._log("[STEP 4] Tạo director's plan...")
@@ -574,13 +583,30 @@ Return JSON only:
             if hasattr(loc, 'location_lock') and loc.location_lock:
                 loc_locks.append(f"- {loc.id}: {loc.location_lock}")
 
-        # Format SRT entries
-        srt_text = ""
-        for i, entry in enumerate(srt_entries):
-            srt_text += f"[{i+1}] {entry.start_time} --> {entry.end_time}\n{entry.text}\n\n"
+        # Chia SRT entries thành batches để xử lý SRT dài
+        # Mỗi batch ~80 entries hoặc ~10000 ký tự
+        BATCH_SIZE = 80  # Số entries mỗi batch
+        all_scenes = []
+        scene_id_counter = 1
 
-        # Build prompt
-        prompt = f"""Create a director's shooting plan by dividing the SRT into visual scenes.
+        total_entries = len(srt_entries)
+        self._log(f"  Total SRT entries: {total_entries}")
+
+        for batch_start in range(0, total_entries, BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, total_entries)
+            batch_entries = srt_entries[batch_start:batch_end]
+
+            self._log(f"  Processing batch: entries {batch_start+1}-{batch_end}/{total_entries}")
+
+            # Format SRT entries cho batch này
+            srt_text = ""
+            for i, entry in enumerate(batch_entries):
+                # Giữ nguyên index gốc (1-based)
+                original_idx = batch_start + i + 1
+                srt_text += f"[{original_idx}] {entry.start_time} --> {entry.end_time}\n{entry.text}\n\n"
+
+            # Build prompt
+            prompt = f"""Create a director's shooting plan by dividing the SRT into visual scenes.
 
 VISUAL CONTEXT:
 {context_lock}
@@ -591,21 +617,23 @@ CHARACTERS (use these exact descriptions in scenes):
 LOCATIONS (use these exact descriptions in scenes):
 {chr(10).join(loc_locks) if loc_locks else 'No locations defined'}
 
-SRT ENTRIES:
-{srt_text[:12000]}
+SRT ENTRIES (indices {batch_start+1} to {batch_end}):
+{srt_text}
 
 Rules:
 1. Each scene should be 3-8 seconds
 2. Group SRT entries that belong to the same visual moment
 3. Assign appropriate characters and locations to each scene
 4. Create a visual_moment description (what the viewer sees)
+5. scene_id should start from {scene_id_counter}
+6. srt_indices should use the ORIGINAL indices shown in brackets [N]
 
 Return JSON only:
 {{
     "scenes": [
         {{
-            "scene_id": 1,
-            "srt_indices": [1, 2],
+            "scene_id": {scene_id_counter},
+            "srt_indices": [{batch_start+1}, ...],
             "srt_start": "00:00:00,000",
             "srt_end": "00:00:05,000",
             "duration": 5.0,
@@ -620,26 +648,45 @@ Return JSON only:
 }}
 """
 
-        # Call API
-        response = self._call_api(prompt, temperature=0.5, max_tokens=8192)
-        if not response:
-            self._log("  ERROR: API call failed!", "ERROR")
-            return StepResult("create_director_plan", StepStatus.FAILED, "API call failed")
+            # Call API
+            response = self._call_api(prompt, temperature=0.5, max_tokens=8192)
+            if not response:
+                self._log(f"  ERROR: API call failed for batch {batch_start+1}-{batch_end}!", "ERROR")
+                continue  # Thử batch tiếp theo
 
-        # Parse response
-        data = self._extract_json(response)
-        if not data or "scenes" not in data:
-            self._log("  ERROR: Could not parse director plan!", "ERROR")
-            return StepResult("create_director_plan", StepStatus.FAILED, "JSON parse failed")
+            # Parse response
+            data = self._extract_json(response)
+            if not data or "scenes" not in data:
+                self._log(f"  ERROR: Could not parse batch {batch_start+1}-{batch_end}!", "ERROR")
+                continue
+
+            # Thêm scenes vào kết quả
+            batch_scenes = data["scenes"]
+            self._log(f"     -> Got {len(batch_scenes)} scenes from this batch")
+
+            # Cập nhật scene_id để liên tục
+            for scene in batch_scenes:
+                scene["scene_id"] = scene_id_counter
+                all_scenes.append(scene)
+                scene_id_counter += 1
+
+            # Delay giữa các batch để tránh rate limit
+            if batch_end < total_entries:
+                time.sleep(1)
+
+        # Kiểm tra có scenes không
+        if not all_scenes:
+            self._log("  ERROR: No scenes created!", "ERROR")
+            return StepResult("create_director_plan", StepStatus.FAILED, "No scenes created")
 
         # Save to Excel
         try:
-            workbook.save_director_plan(data["scenes"])
+            workbook.save_director_plan(all_scenes)
             workbook.save()
-            self._log(f"  -> Saved {len(data['scenes'])} scenes to director_plan")
-            self._log(f"     Total duration: {sum(s.get('duration', 0) for s in data['scenes']):.1f}s")
+            self._log(f"  -> Saved {len(all_scenes)} scenes to director_plan")
+            self._log(f"     Total duration: {sum(s.get('duration', 0) for s in all_scenes):.1f}s")
 
-            return StepResult("create_director_plan", StepStatus.COMPLETED, "Success", data)
+            return StepResult("create_director_plan", StepStatus.COMPLETED, "Success", {"scenes": all_scenes})
         except Exception as e:
             self._log(f"  ERROR: Could not save to Excel: {e}", "ERROR")
             return StepResult("create_director_plan", StepStatus.FAILED, str(e))
