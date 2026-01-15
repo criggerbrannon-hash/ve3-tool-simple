@@ -63,12 +63,22 @@ def create_excel_with_api_basic(project_dir: Path, code: str, callback=None) -> 
             print(msg)
 
     try:
+        import yaml
         from modules.progressive_prompts import ProgressivePromptsGenerator
         from modules.excel_manager import PromptWorkbook
-        from modules.utils import parse_srt_file, load_config
+        from modules.utils import parse_srt_file
 
-        # Load config
-        config = load_config()
+        # Load config from settings.yaml
+        config = {}
+        config_path = TOOL_DIR / "config" / "settings.yaml"
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+
+        # Collect API keys
+        deepseek_key = config.get('deepseek_api_key', '')
+        if deepseek_key:
+            config['deepseek_api_keys'] = [deepseek_key]
 
         # Check SRT file
         srt_path = project_dir / f"{code}.srt"
@@ -215,11 +225,16 @@ def process_project_pic_basic(code: str, callback=None) -> bool:
 
     # Step 4: Create images - NO IP ROTATION (use local IP)
     try:
+        import yaml
         from modules.drission_flow_api import DrissionFlowAPI
         from modules.excel_manager import PromptWorkbook
-        from modules.utils import load_config
 
-        config = load_config()
+        # Load config
+        config = {}
+        config_path = TOOL_DIR / "config" / "settings.yaml"
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
 
         # Load workbook
         wb = PromptWorkbook(str(excel_path))
