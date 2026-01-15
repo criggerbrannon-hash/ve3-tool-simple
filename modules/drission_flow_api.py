@@ -686,19 +686,28 @@ JS_CLICK_NEW_PROJECT = '''
 # JS để chọn "Tạo hình ảnh" từ dropdown
 JS_SELECT_IMAGE_MODE = '''
 (async function() {
-    // 1. Click dropdown
+    // 1. Tìm dropdown
     var dropdown = document.querySelector('button[role="combobox"]');
     if (!dropdown) {
         console.log('[AUTO] Dropdown not found');
         return 'NO_DROPDOWN';
     }
+
+    // 2. Kiểm tra mode hiện tại - nếu đã là "Tạo hình ảnh" thì không cần chọn lại
+    var currentText = dropdown.textContent || '';
+    if (currentText.includes('Tạo hình ảnh') || currentText.includes('Generate image')) {
+        console.log('[AUTO] Mode already: Tao hinh anh');
+        return 'ALREADY_SELECTED';
+    }
+
+    // 3. Click dropdown để mở menu
     dropdown.click();
     console.log('[AUTO] Clicked dropdown');
 
-    // 2. Đợi dropdown mở
+    // 4. Đợi dropdown mở
     await new Promise(r => setTimeout(r, 500));
 
-    // 3. Tìm và click "Tạo hình ảnh"
+    // 5. Tìm và click "Tạo hình ảnh"
     var allElements = document.querySelectorAll('*');
     for (var el of allElements) {
         var text = el.textContent || '';
@@ -2073,6 +2082,10 @@ class DrissionFlowAPI:
                         if result == 'CLICKED':
                             self.log("✓ Chọn 'Tạo hình ảnh' thành công!")
                             time.sleep(0.5)
+                            select_success = True
+                            break
+                        elif result == 'ALREADY_SELECTED':
+                            self.log("✓ Mode đã là 'Tạo hình ảnh' (OK)")
                             select_success = True
                             break
                         elif result == 'NO_DROPDOWN':
