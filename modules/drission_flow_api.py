@@ -3036,35 +3036,45 @@ class DrissionFlowAPI:
                     else:
                         return False, [], error
 
-                # Nếu lỗi 403: Reset Chrome, sau 3 lần thì đổi IPv6
+                # === 403 ERROR HANDLING ===
+                # Logic: 403 → Reset Chrome (3 lần) → Clear data + login lại → Đổi IPv6
                 if "403" in error:
                     self._consecutive_403 += 1
-                    self.log(f"⚠️ 403 error (lần {self._consecutive_403}/3) - RESET CHROME!", "WARN")
+                    cleared_flag = getattr(self, '_cleared_data_for_403', False)
 
-                    # Kill Chrome
-                    self._kill_chrome()
-                    self.close()
-                    time.sleep(2)
+                    if self._consecutive_403 <= 3 and not cleared_flag:
+                        # Bước 1: Reset Chrome (tối đa 3 lần)
+                        self.log(f"⚠️ 403 error (lần {self._consecutive_403}/3) - RESET CHROME!", "WARN")
+                        self._kill_chrome()
+                        self.close()
+                        time.sleep(2)
 
-                    # Sau 3 lần 403 liên tiếp → đổi IPv6
-                    if self._consecutive_403 >= 3:
+                    elif self._consecutive_403 == 4 or (self._consecutive_403 > 3 and not cleared_flag):
+                        # Bước 2: Sau 3 lần reset vẫn 403 → Xóa dữ liệu + đăng nhập lại
+                        self.log(f"⚠️ 403 sau 3 lần reset → XÓA DỮ LIỆU + ĐĂNG NHẬP LẠI!", "WARN")
+                        self.clear_chrome_data()
+                        self._cleared_data_for_403 = True
+                        self._consecutive_403 = 0  # Reset counter sau khi clear
+
+                    else:
+                        # Bước 3: Đã clear data vẫn 403 → Đổi IPv6
+                        self.log(f"⚠️ 403 sau khi clear data → ĐỔI IPv6!", "WARN")
+                        self._cleared_data_for_403 = False  # Reset flag
                         self._consecutive_403 = 0
+
                         if self._ipv6_rotator and self._ipv6_activated:
-                            self.log(f"  → 🔄 3 lần 403 → Rotating IPv6...")
                             new_ip = self._ipv6_rotator.rotate()
                             if new_ip:
                                 self.log(f"  → 🌐 IPv6 mới: {new_ip}")
-                                # Cập nhật SOCKS5 proxy với IPv6 mới
                                 if hasattr(self, '_ipv6_proxy') and self._ipv6_proxy:
                                     self._ipv6_proxy.set_ipv6(new_ip)
-                                    self.log(f"  → 🌐 SOCKS5 proxy updated")
                             else:
                                 self.log(f"  → ⚠️ Không rotate được IPv6!", "WARN")
 
                     # Restart Chrome
                     if self.restart_chrome(rotate_ipv6=False):
                         self.log("  → Chrome restarted, tiếp tục...")
-                        continue  # Thử lại sau khi reset
+                        continue
                     else:
                         return False, [], "Không restart được Chrome sau 403"
 
@@ -3232,9 +3242,10 @@ class DrissionFlowAPI:
             self.log(f"⚠️ Refresh warning: {e}", "WARN")
 
         # Reset 403 counter khi thành công
-        if self._consecutive_403 > 0:
+        if self._consecutive_403 > 0 or getattr(self, '_cleared_data_for_403', False):
             self.log(f"[IPv6] Reset 403 counter (was {self._consecutive_403})")
             self._consecutive_403 = 0
+            self._cleared_data_for_403 = False
 
         return True, images, None
 
@@ -4413,43 +4424,51 @@ class DrissionFlowAPI:
             )
 
             if success:
-                if self._consecutive_403 > 0:
+                if self._consecutive_403 > 0 or getattr(self, '_cleared_data_for_403', False):
                     self.log(f"[T2V→I2V] Reset 403 counter (was {self._consecutive_403})")
                     self._consecutive_403 = 0
+                    self._cleared_data_for_403 = False
                 return True, result, None
 
             if error:
                 last_error = error
 
-                # === 403 ERROR: Reset Chrome, sau 3 lần thì đổi IPv6 ===
+                # === 403 ERROR HANDLING ===
+                # Logic: 403 → Reset Chrome (3 lần) → Clear data + login lại → Đổi IPv6
                 if "403" in str(error):
                     self._consecutive_403 += 1
-                    self.log(f"[T2V→I2V] ⚠️ 403 error (lần {self._consecutive_403}/3) - RESET CHROME!", "WARN")
+                    cleared_flag = getattr(self, '_cleared_data_for_403', False)
 
-                    # Sau 9 lần 403 liên tiếp (đã thử 3 vòng IPv6), clear Chrome data
-                    if self._consecutive_403 >= 9:
-                        self.log(f"[T2V→I2V] 🗑️ 403 liên tiếp {self._consecutive_403} lần → CLEAR CHROME DATA!")
+                    if self._consecutive_403 <= 3 and not cleared_flag:
+                        # Bước 1: Reset Chrome (tối đa 3 lần)
+                        self.log(f"[T2V→I2V] ⚠️ 403 error (lần {self._consecutive_403}/3) - RESET CHROME!", "WARN")
+                        self._kill_chrome()
+                        self.close()
+                        time.sleep(2)
+
+                    elif self._consecutive_403 == 4 or (self._consecutive_403 > 3 and not cleared_flag):
+                        # Bước 2: Sau 3 lần reset vẫn 403 → Xóa dữ liệu + đăng nhập lại
+                        self.log(f"[T2V→I2V] ⚠️ 403 sau 3 lần reset → XÓA DỮ LIỆU + ĐĂNG NHẬP LẠI!", "WARN")
                         self.clear_chrome_data()
+                        self._cleared_data_for_403 = True
                         self._consecutive_403 = 0
-                        return False, None, "403 liên tiếp - Đã clear Chrome data, cần login lại Google!"
+                        return False, None, "403 - Đã clear Chrome data, cần login lại Google!"
 
-                    self._kill_chrome()
-                    self.close()
-                    time.sleep(2)
+                    else:
+                        # Bước 3: Đã clear data vẫn 403 → Đổi IPv6
+                        self.log(f"[T2V→I2V] ⚠️ 403 sau khi clear data → ĐỔI IPv6!", "WARN")
+                        self._cleared_data_for_403 = False
+                        self._consecutive_403 = 0
+                        self._kill_chrome()
+                        self.close()
+                        time.sleep(2)
 
-                    # Sau 3 lần 403 liên tiếp → đổi IPv6
-                    if self._consecutive_403 >= 3 and self._consecutive_403 % 3 == 0:
                         if self._ipv6_rotator and self._ipv6_activated:
-                            self.log(f"[T2V→I2V] → 🔄 3 lần 403 → Rotating IPv6...")
                             new_ip = self._ipv6_rotator.rotate()
                             if new_ip:
                                 self.log(f"[T2V→I2V] → 🌐 IPv6 mới: {new_ip}")
-                                # Cập nhật SOCKS5 proxy với IPv6 mới
                                 if hasattr(self, '_ipv6_proxy') and self._ipv6_proxy:
                                     self._ipv6_proxy.set_ipv6(new_ip)
-                                    self.log(f"[T2V→I2V] → 🌐 SOCKS5 proxy updated")
-                            else:
-                                self.log(f"[T2V→I2V] → ⚠️ Không rotate được IPv6!", "WARN")
 
                     if self.restart_chrome(rotate_ipv6=False):
                         self.log("[T2V→I2V] → Chrome restarted, tiếp tục...")
