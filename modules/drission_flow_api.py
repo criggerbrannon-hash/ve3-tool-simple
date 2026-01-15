@@ -1651,12 +1651,9 @@ class DrissionFlowAPI:
     def reset_chrome_profile(self) -> bool:
         """
         Xóa TRIỆT ĐỂ Chrome profile - Chrome sẽ trắng như mới.
-        Cách này tốt hơn clear_chrome_data() vì xóa hoàn toàn thư mục profile.
 
-        Flow:
-        1. Đóng Chrome và driver
-        2. Xóa toàn bộ thư mục profile
-        3. Đánh dấu cần login lại
+        Với Chrome Portable: Xóa thư mục Data cùng cấp với exe.
+        Với Chrome thường: Xóa thư mục profile_dir.
 
         Returns:
             True nếu xóa thành công
@@ -1671,26 +1668,32 @@ class DrissionFlowAPI:
             self.close()
             time.sleep(2)
 
-            # 2. Xóa thư mục profile
-            if self.profile_dir and self.profile_dir.exists():
+            deleted = False
+
+            # 2. Nếu dùng Chrome Portable → xóa thư mục Data
+            if hasattr(self, '_chrome_portable') and self._chrome_portable:
+                chrome_exe = Path(os.path.expandvars(self._chrome_portable))
+                data_dir = chrome_exe.parent / "Data"
+                if data_dir.exists():
+                    self.log(f"  Deleting Chrome Portable Data: {data_dir}")
+                    try:
+                        shutil.rmtree(str(data_dir))
+                        self.log(f"  ✓ Deleted Data folder")
+                        deleted = True
+                    except Exception as e:
+                        self.log(f"  ⚠️ Could not delete Data: {e}", "WARN")
+
+            # 3. Fallback: xóa profile_dir (Chrome thường)
+            if not deleted and self.profile_dir and self.profile_dir.exists():
                 self.log(f"  Deleting: {self.profile_dir}")
                 try:
                     shutil.rmtree(str(self.profile_dir))
                     self.log(f"  ✓ Deleted profile directory")
+                    deleted = True
                 except Exception as e:
                     self.log(f"  ⚠️ Could not delete profile: {e}", "WARN")
-                    # Thử xóa từng file quan trọng
-                    important_dirs = ['Default', 'Profile 1', 'Cookies', 'Cache', 'Code Cache']
-                    for subdir in important_dirs:
-                        subpath = self.profile_dir / subdir
-                        if subpath.exists():
-                            try:
-                                shutil.rmtree(str(subpath))
-                                self.log(f"    ✓ Deleted {subdir}")
-                            except:
-                                pass
 
-            # 3. Reset tất cả flags
+            # 4. Reset tất cả flags
             self._ready = False
             self._t2v_mode_selected = False
             self._image_mode_selected = False
