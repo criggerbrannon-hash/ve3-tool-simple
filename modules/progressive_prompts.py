@@ -272,6 +272,148 @@ Return JSON only:
             return StepResult("analyze_story", StepStatus.FAILED, str(e))
 
     # =========================================================================
+    # STEP 1.5: PHÂN TÍCH NỘI DUNG CON (STORY SEGMENTS)
+    # =========================================================================
+
+    def step_analyze_story_segments(
+        self,
+        project_dir: Path,
+        code: str,
+        workbook: PromptWorkbook,
+        srt_entries: list,
+        txt_content: str = ""
+    ) -> StepResult:
+        """
+        Step 1.5: Phân tích câu chuyện thành các nội dung con (segments).
+
+        Logic top-down:
+        1. Xác định các phần nội dung chính trong câu chuyện
+        2. Mỗi phần cần truyền tải thông điệp gì
+        3. Mỗi phần cần bao nhiêu ảnh để thể hiện đầy đủ
+        4. Ước tính thời gian từ SRT
+
+        Output sheet: story_segments
+        """
+        self._log("\n" + "="*60)
+        self._log("[STEP 1.5] Phân tích nội dung con (story segments)...")
+        self._log("="*60)
+
+        # Check if already done
+        try:
+            existing = workbook.get_story_segments()
+            if existing and len(existing) > 0:
+                self._log(f"  -> Đã có {len(existing)} segments, skip!")
+                return StepResult("analyze_story_segments", StepStatus.COMPLETED, "Already done")
+        except:
+            pass
+
+        # Read context from previous step
+        story_analysis = {}
+        try:
+            story_analysis = workbook.get_story_analysis() or {}
+        except:
+            pass
+
+        context_lock = story_analysis.get("context_lock", "")
+        themes = story_analysis.get("themes", [])
+
+        # Prepare story text
+        if txt_content:
+            story_text = txt_content
+        else:
+            story_text = " ".join([e.text for e in srt_entries])
+
+        # Tính tổng thời gian từ SRT
+        total_duration = 0
+        if srt_entries:
+            try:
+                # Parse end time của entry cuối
+                last_entry = srt_entries[-1]
+                end_time = last_entry.end_time  # Format: "00:01:30,500"
+                parts = end_time.replace(',', ':').split(':')
+                total_duration = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) + int(parts[3]) / 1000
+            except:
+                total_duration = len(srt_entries) * 3  # Ước tính 3s/entry
+
+        self._log(f"  Tổng thời gian SRT: {total_duration:.1f}s ({len(srt_entries)} entries)")
+
+        # Build prompt
+        prompt = f"""Analyze this story and divide it into content segments for video creation.
+
+STORY CONTEXT:
+{context_lock}
+
+THEMES: {', '.join(themes) if themes else 'Not specified'}
+
+TOTAL DURATION: {total_duration:.1f} seconds
+TOTAL SRT ENTRIES: {len(srt_entries)}
+
+STORY CONTENT:
+{story_text[:20000]}
+
+TASK: Divide the story into logical segments. Each segment is a distinct part of the narrative.
+
+For each segment, determine:
+1. What is the main message/purpose of this segment?
+2. How many images are needed to fully convey this segment visually?
+   - Consider: 1 image = 3-8 seconds of video
+   - More complex/important segments need more images
+   - Simple transitions may need only 1 image
+
+GUIDELINES:
+- Total images across all segments should roughly equal: {int(total_duration / 5)} (assuming ~5s per image)
+- Each segment should have at least 1 image, typically 2-5 images
+- Important emotional moments may need more images
+- Action sequences need more images than dialogue
+
+Return JSON only:
+{{
+    "segments": [
+        {{
+            "segment_id": 1,
+            "segment_name": "Opening/Introduction",
+            "message": "What this segment conveys to the viewer",
+            "key_elements": ["element1", "element2"],
+            "image_count": 3,
+            "estimated_duration": 15.0,
+            "srt_range_start": 1,
+            "srt_range_end": 5,
+            "importance": "high/medium/low"
+        }}
+    ],
+    "total_images": 20,
+    "summary": "Brief overview of the story structure"
+}}
+"""
+
+        # Call API
+        response = self._call_api(prompt, temperature=0.3, max_tokens=4096)
+        if not response:
+            self._log("  ERROR: API call failed!", "ERROR")
+            return StepResult("analyze_story_segments", StepStatus.FAILED, "API call failed")
+
+        # Parse response
+        data = self._extract_json(response)
+        if not data or "segments" not in data:
+            self._log("  ERROR: Could not parse segments!", "ERROR")
+            return StepResult("analyze_story_segments", StepStatus.FAILED, "JSON parse failed")
+
+        # Save to Excel
+        try:
+            workbook.save_story_segments(data["segments"], data.get("total_images", 0), data.get("summary", ""))
+            workbook.save()
+
+            total_images = sum(s.get("image_count", 0) for s in data["segments"])
+            self._log(f"  -> Saved {len(data['segments'])} segments ({total_images} total images)")
+            for seg in data["segments"][:5]:
+                self._log(f"     - {seg.get('segment_name')}: {seg.get('image_count')} images")
+
+            return StepResult("analyze_story_segments", StepStatus.COMPLETED, "Success", data)
+        except Exception as e:
+            self._log(f"  ERROR: Could not save to Excel: {e}", "ERROR")
+            return StepResult("analyze_story_segments", StepStatus.FAILED, str(e))
+
+    # =========================================================================
     # STEP 2: TẠO CHARACTERS
     # =========================================================================
 
@@ -572,7 +714,25 @@ Return JSON only:
         characters = workbook.get_characters()
         locations = workbook.get_locations()
 
+        # Đọc story segments để hướng dẫn số lượng scenes
+        story_segments = []
+        total_planned_images = 0
+        try:
+            story_segments = workbook.get_story_segments() or []
+            total_planned_images = sum(s.get("image_count", 0) for s in story_segments)
+            self._log(f"  Story segments: {len(story_segments)} segments, {total_planned_images} planned images")
+        except:
+            pass
+
         context_lock = story_analysis.get("context_lock", "")
+
+        # Build segments info for prompt
+        segments_info = ""
+        if story_segments:
+            segments_info = "\nSTORY SEGMENTS (use this to guide scene distribution):\n"
+            for seg in story_segments:
+                segments_info += f"- Segment {seg.get('segment_id')}: {seg.get('segment_name')} - {seg.get('image_count')} images (SRT {seg.get('srt_range_start')}-{seg.get('srt_range_end')})\n"
+                segments_info += f"  Message: {seg.get('message', '')[:100]}...\n"
 
         # Build character locks for prompt
         char_locks = []
@@ -633,11 +793,18 @@ Return JSON only:
                 srt_text += f"[{original_idx+1}] {entry.start_time} --> {entry.end_time}\n{entry.text}\n\n"
 
             # Build prompt
+            # Tính số ảnh dự kiến cho batch này dựa trên segments
+            expected_images_hint = ""
+            if total_planned_images > 0:
+                batch_ratio = len(batch_entries) / total_entries
+                expected_for_batch = int(total_planned_images * batch_ratio)
+                expected_images_hint = f"\nEXPECTED SCENES FOR THIS BATCH: approximately {expected_for_batch} scenes"
+
             prompt = f"""Create a director's shooting plan by dividing the SRT into visual scenes.
 
 VISUAL CONTEXT:
 {context_lock}
-
+{segments_info}
 CHARACTERS (use these exact descriptions in scenes):
 {chr(10).join(char_locks) if char_locks else 'No characters defined'}
 
@@ -646,17 +813,19 @@ LOCATIONS (use these exact descriptions in scenes):
 
 SRT ENTRIES (indices {batch_start+1} to {batch_end+1}):
 {srt_text}
+{expected_images_hint}
 
 Rules:
 1. Each scene MUST be between 3-8 seconds. NEVER exceed 8 seconds!
    - If SRT entries span >8s, split into multiple scenes
    - Prefer shorter scenes (3-5s) over longer ones
 2. Group SRT entries that belong to the same visual moment
-3. Assign appropriate characters and locations to each scene
-4. Create a visual_moment description (what the viewer sees)
-5. scene_id should start from {scene_id_counter}
-6. srt_indices should use the ORIGINAL indices shown in brackets [N]
-7. IMPORTANT: Duration is calculated from srt_start to srt_end, keep it <= 8 seconds
+3. Follow the STORY SEGMENTS plan for how many images each part needs
+4. Assign appropriate characters and locations to each scene
+5. Create a visual_moment description (what the viewer sees)
+6. scene_id should start from {scene_id_counter}
+7. srt_indices should use the ORIGINAL indices shown in brackets [N]
+8. IMPORTANT: Duration is calculated from srt_start to srt_end, keep it <= 8 seconds
 
 Return JSON only:
 {{
@@ -1055,6 +1224,12 @@ Return JSON only with EXACTLY {len(batch)} scenes:
             self._log("Step 1 FAILED! Stopping.", "ERROR")
             return False
 
+        # Step 1.5: Analyze story segments (nội dung con)
+        result = self.step_analyze_story_segments(project_dir, code, workbook, srt_entries, txt_content)
+        if result.status == StepStatus.FAILED:
+            self._log("Step 1.5 FAILED! Stopping.", "ERROR")
+            return False
+
         # Step 2: Create characters
         result = self.step_create_characters(project_dir, code, workbook, srt_entries, txt_content)
         if result.status == StepStatus.FAILED:
@@ -1067,7 +1242,7 @@ Return JSON only with EXACTLY {len(batch)} scenes:
             self._log("Step 3 FAILED! Stopping.", "ERROR")
             return False
 
-        # Step 4: Create director plan
+        # Step 4: Create director plan (sử dụng segments để guide số lượng scenes)
         result = self.step_create_director_plan(project_dir, code, workbook, srt_entries)
         if result.status == StepStatus.FAILED:
             self._log("Step 4 FAILED! Stopping.", "ERROR")

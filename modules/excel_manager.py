@@ -358,6 +358,7 @@ class PromptWorkbook:
     SCENES_SHEET = "scenes"
     DIRECTOR_PLAN_SHEET = "director_plan"
     STORY_ANALYSIS_SHEET = "story_analysis"
+    STORY_SEGMENTS_SHEET = "story_segments"  # Nội dung con của câu chuyện
     LOCATIONS_SHEET = "locations"
     BACKUP_CHARACTERS_SHEET = "backup_characters"
     BACKUP_LOCATIONS_SHEET = "backup_locations"
@@ -994,6 +995,113 @@ class PromptWorkbook:
                 data[key] = value
 
         return data
+
+    # ========== STORY SEGMENTS SHEET ==========
+
+    def _ensure_story_segments_sheet(self) -> None:
+        """Đảm bảo sheet story_segments tồn tại."""
+        if self.workbook is None:
+            self.load_or_create()
+
+        if self.STORY_SEGMENTS_SHEET not in self.workbook.sheetnames:
+            self._create_story_segments_sheet()
+            self.save()
+
+    def _create_story_segments_sheet(self) -> None:
+        """Tạo sheet story_segments với header."""
+        ws = self.workbook.create_sheet(self.STORY_SEGMENTS_SHEET)
+
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="9932CC", end_color="9932CC", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+
+        columns = [
+            "segment_id", "segment_name", "message", "key_elements",
+            "image_count", "estimated_duration", "srt_range_start",
+            "srt_range_end", "importance", "status"
+        ]
+        for col, column_name in enumerate(columns, start=1):
+            cell = ws.cell(row=1, column=col, value=column_name)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+
+    def save_story_segments(self, segments: list, total_images: int = 0, summary: str = "") -> None:
+        """
+        Lưu story segments vào Excel.
+
+        Args:
+            segments: List các segment dict
+            total_images: Tổng số ảnh cần tạo
+            summary: Tóm tắt cấu trúc câu chuyện
+        """
+        self._ensure_story_segments_sheet()
+        ws = self.workbook[self.STORY_SEGMENTS_SHEET]
+
+        # Xóa dữ liệu cũ (giữ header)
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row)
+
+        # Thêm segments
+        for seg in segments:
+            next_row = ws.max_row + 1
+            ws.cell(row=next_row, column=1, value=int(seg.get("segment_id", 0)))
+            ws.cell(row=next_row, column=2, value=seg.get("segment_name", ""))
+            ws.cell(row=next_row, column=3, value=seg.get("message", "")[:500])
+
+            # key_elements - convert list to JSON string
+            key_elements = seg.get("key_elements", [])
+            if isinstance(key_elements, list):
+                key_elements = json.dumps(key_elements)
+            ws.cell(row=next_row, column=4, value=key_elements)
+
+            ws.cell(row=next_row, column=5, value=int(seg.get("image_count", 1)))
+            ws.cell(row=next_row, column=6, value=round(seg.get("estimated_duration", 0), 2))
+            ws.cell(row=next_row, column=7, value=int(seg.get("srt_range_start", 0)))
+            ws.cell(row=next_row, column=8, value=int(seg.get("srt_range_end", 0)))
+            ws.cell(row=next_row, column=9, value=seg.get("importance", "medium"))
+            ws.cell(row=next_row, column=10, value="pending")
+
+        self.logger.info(f"Saved {len(segments)} story segments (total {total_images} images)")
+
+    def get_story_segments(self) -> list:
+        """
+        Đọc story segments từ Excel.
+
+        Returns:
+            List các segment dict
+        """
+        self._ensure_story_segments_sheet()
+        ws = self.workbook[self.STORY_SEGMENTS_SHEET]
+
+        segments = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+
+            seg = {
+                "segment_id": int(row[0]) if row[0] else 0,
+                "segment_name": row[1] or "",
+                "message": row[2] or "",
+                "key_elements": row[3] or "[]",
+                "image_count": int(row[4]) if row[4] else 1,
+                "estimated_duration": float(row[5]) if row[5] else 0,
+                "srt_range_start": int(row[6]) if row[6] else 0,
+                "srt_range_end": int(row[7]) if row[7] else 0,
+                "importance": row[8] or "medium",
+                "status": row[9] or "pending"
+            }
+
+            # Parse key_elements JSON
+            if isinstance(seg["key_elements"], str) and seg["key_elements"].startswith("["):
+                try:
+                    seg["key_elements"] = json.loads(seg["key_elements"])
+                except:
+                    pass
+
+            segments.append(seg)
+
+        return segments
 
     # ========== LOCATIONS SHEET ==========
 
