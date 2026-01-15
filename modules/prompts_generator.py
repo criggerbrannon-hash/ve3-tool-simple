@@ -6211,8 +6211,9 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
         }
 
         # Tạo locations từ phân tích SRT (kết hợp mô tả trích xuất)
+        # ID format đơn giản: loc1, loc2, loc3...
         flashback_locs = [
-            {"id": "loc_narrator", "name": "Storytelling Room",
+            {"id": "loc1", "name": "Storytelling Room",  # loc1 cho narrator
              "lock": LOCATION_LOCK,
              "english_prompt": f"Photorealistic scene. {LOCATION_LOCK}. Cinematic lighting, 8K quality."}
         ]
@@ -6229,7 +6230,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 srt_loc_desc = extracted_loc_descs[i]
                 english_prompt = f"{english_prompt} Story setting: {srt_loc_desc}."
             flashback_locs.append({
-                "id": f"loc_{i+1:02d}",
+                "id": f"loc{i+2}",  # loc2, loc3, loc4... (loc1 đã dùng cho narrator)
                 "name": loc_type,
                 "lock": loc_data["lock"],
                 "english_prompt": english_prompt
@@ -6238,7 +6239,8 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
         # Nếu không đủ 6 locations, thêm generic (với mô tả từ SRT nếu có)
         generic_locs = ["Home Interior", "City", "Park/Garden", "Night Scene", "Village/Countryside"]
         while len(flashback_locs) < 6:
-            idx = len(flashback_locs) - 1  # -1 vì đã có loc_narrator
+            next_id = len(flashback_locs) + 1  # loc2, loc3, loc4...
+            idx = len(flashback_locs) - 1
             loc_type = generic_locs[idx % len(generic_locs)]
             if loc_type not in [l["name"] for l in flashback_locs]:
                 loc_data = location_prompts.get(loc_type)
@@ -6248,10 +6250,10 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                     srt_loc_desc = extracted_loc_descs[idx]
                     english_prompt = f"{english_prompt} Story setting: {srt_loc_desc}."
                 flashback_locs.append({
-                    "id": f"loc_{idx+1:02d}",
+                    "id": f"loc{next_id}",  # Đơn giản: loc2, loc3, loc4...
                     "name": loc_type,
                     "lock": loc_data["lock"],
-                    "english_prompt": english_prompt  # Dùng prompt đã thêm mô tả SRT
+                    "english_prompt": english_prompt
                 })
         all_loc_refs = []
         backup_locs = []
@@ -6435,7 +6437,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
 
             if is_narrator_scene(scene_id):
                 # === NARRATOR SCENE (30%) ===
-                # Chỉ dùng người kể (nvc) + bối cảnh cố định (loc_narrator)
+                # Chỉ dùng người kể (nvc) + bối cảnh cố định (loc1)
                 narrator_count += 1
                 angle_idx = narrator_count % len(narrator_angles)
                 shot_type, lens, composition, lighting, atmosphere, emotion = narrator_angles[angle_idx]
@@ -6443,8 +6445,8 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 # References CỐ ĐỊNH cho Narrator - an toàn, nhất quán
                 # Format giống API: characters_used = comma-separated, reference_files = JSON
                 characters_used = "nvc"  # Comma-separated (like API)
-                location_used = "loc_narrator"
-                reference_files = '["nvc.png", "loc_narrator.png"]'  # JSON array (like API)
+                location_used = "loc1"
+                reference_files = '["nvc.png", "loc1.png"]'  # JSON array (like API)
 
                 fallback_prompt = (
                     f"{shot_type}, {lens}. {composition}. "
@@ -6453,7 +6455,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                     f"{LOCATION_LOCK}. "
                     f"Mood: {emotion}. "
                     f"Photorealistic, 8K cinematic quality, film grain, shallow depth of field. "
-                    f"(nvc.png, loc_narrator.png)"
+                    f"(nvc.png, loc1.png)"
                 )
 
             else:
@@ -6465,7 +6467,7 @@ NOW CREATE {num_shots} SHOTS that VISUALLY TELL THIS STORY MOMENT: "{scene_summa
                 # Format giống API: characters_used = comma-separated, reference_files = JSON
                 all_char_ids = ["nvc"] + [c["id"] for c in flashback_chars]
                 characters_used = ", ".join(all_char_ids)  # Comma-separated (like API)
-                location_used = "loc_01"
+                location_used = "loc2"  # Flashback dùng loc2 (loc1 là narrator)
 
                 # Build reference_files từ characters_used và location_used (KHÔNG dùng all_refs)
                 scene_refs = [f"{cid}.png" for cid in all_char_ids] + [f"{location_used}.png"]

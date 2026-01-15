@@ -927,11 +927,17 @@ Return JSON only:
         # Save to Excel
         try:
             minor_count = 0
+            char_counter = 0  # Đếm để tạo ID đơn giản: nv1, nv2, nv3...
+
             for char_data in data["characters"]:
-                char_id = char_data.get("id", "")
-                # Đảm bảo id bắt đầu bằng "nv_"
-                if not char_id.startswith("nv_"):
-                    char_id = f"nv_{char_id}"
+                role = char_data.get("role", "supporting").lower()
+
+                # Tạo ID đơn giản và nhất quán
+                if role == "narrator" or "narrator" in char_data.get("name", "").lower():
+                    char_id = "nvc"  # Narrator luôn là nvc
+                else:
+                    char_counter += 1
+                    char_id = f"nv{char_counter}"  # nv1, nv2, nv3...
 
                 # Detect trẻ vị thành niên (dưới 18 tuổi)
                 is_minor = char_data.get("is_minor", False)
@@ -1106,11 +1112,11 @@ Return JSON only:
 
         # Save to Excel - LƯU VÀO SHEET CHARACTERS với id loc_xxx
         try:
+            loc_counter = 0  # Đếm để tạo ID đơn giản: loc1, loc2, loc3...
+
             for loc_data in data["locations"]:
-                loc_id = loc_data.get("id", "")
-                # Đảm bảo id bắt đầu bằng "loc_"
-                if not loc_id.startswith("loc_"):
-                    loc_id = f"loc_{loc_id}"
+                loc_counter += 1
+                loc_id = f"loc{loc_counter}"  # Đơn giản: loc1, loc2, loc3...
 
                 # Tạo Character với role="location" thay vì Location riêng
                 loc_char = Character(
