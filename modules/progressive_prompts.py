@@ -648,12 +648,15 @@ SRT ENTRIES (indices {batch_start+1} to {batch_end+1}):
 {srt_text}
 
 Rules:
-1. Each scene should be 3-8 seconds
+1. Each scene MUST be between 3-8 seconds. NEVER exceed 8 seconds!
+   - If SRT entries span >8s, split into multiple scenes
+   - Prefer shorter scenes (3-5s) over longer ones
 2. Group SRT entries that belong to the same visual moment
 3. Assign appropriate characters and locations to each scene
 4. Create a visual_moment description (what the viewer sees)
 5. scene_id should start from {scene_id_counter}
 6. srt_indices should use the ORIGINAL indices shown in brackets [N]
+7. IMPORTANT: Duration is calculated from srt_start to srt_end, keep it <= 8 seconds
 
 Return JSON only:
 {{
@@ -690,6 +693,12 @@ Return JSON only:
             # Thêm scenes vào kết quả
             batch_scenes = data["scenes"]
             self._log(f"     -> Got {len(batch_scenes)} scenes from this batch")
+
+            # Validate duration - cảnh báo nếu > 8s
+            for scene in batch_scenes:
+                duration = scene.get("duration", 0)
+                if duration and duration > 8:
+                    self._log(f"     ⚠️ Scene {scene.get('scene_id')}: duration={duration}s > 8s!", "WARN")
 
             # Cập nhật scene_id để liên tục
             for scene in batch_scenes:
@@ -834,7 +843,7 @@ Scene {scene.get('scene_id')}:
 - Reference files: {', '.join(char_refs + ([loc_img] if loc_img else []))}
 """
 
-            prompt = f"""Create detailed image prompts for these scenes.
+            prompt = f"""Create detailed image prompts for these {len(batch)} scenes.
 
 VISUAL CONTEXT (use as prefix):
 {context_lock}
@@ -845,30 +854,36 @@ IMPORTANT - REFERENCE FILE ANNOTATIONS:
 - Format: "Description of person (nv_xxx.png) doing action in location (loc_xxx.png)"
 - Character files always start with "nv_", location files always start with "loc_"
 
-SCENES TO PROCESS:
+SCENES TO PROCESS ({len(batch)} scenes - create EXACTLY {len(batch)} prompts):
 {scenes_text}
 
+CRITICAL REQUIREMENTS:
+1. Create EXACTLY {len(batch)} scene prompts - one for EACH scene listed above
+2. Each img_prompt MUST be UNIQUE - do NOT copy/repeat prompts between scenes
+3. Each prompt should reflect the specific visual_moment and text of that scene
+4. Use the exact scene_id from the input
+
 For each scene, create:
-1. img_prompt: Detailed image generation prompt with REFERENCE ANNOTATIONS for each character and location
+1. img_prompt: UNIQUE detailed image generation prompt with REFERENCE ANNOTATIONS
 2. video_prompt: Motion/video prompt if this becomes a video clip
 
 Example img_prompt:
 "Close-up shot, 85mm lens, a 35-year-old man with tired eyes (nv_john.png) sitting at a desk, looking worried, soft window light, in a modern office (loc_office.png), cinematic, 4K"
 
-Return JSON only:
+Return JSON only with EXACTLY {len(batch)} scenes:
 {{
     "scenes": [
         {{
             "scene_id": 1,
-            "img_prompt": "detailed prompt with (character.png) and (location.png) annotations...",
+            "img_prompt": "UNIQUE detailed prompt with (character.png) and (location.png) annotations...",
             "video_prompt": "camera movement and action description..."
         }}
     ]
 }}
 """
 
-            # Call API
-            response = self._call_api(prompt, temperature=0.7, max_tokens=8192)
+            # Call API - dùng temperature thấp hơn để tránh lặp/hallucination
+            response = self._call_api(prompt, temperature=0.5, max_tokens=8192)
             if not response:
                 self._log(f"  ERROR: API call failed for batch {batch_num}!", "ERROR")
                 continue
@@ -879,9 +894,30 @@ Return JSON only:
                 self._log(f"  ERROR: Could not parse batch {batch_num}!", "ERROR")
                 continue
 
+            # Validate: Check số lượng scenes trả về
+            api_scenes = data["scenes"]
+            if len(api_scenes) != len(batch):
+                self._log(f"  ⚠️ API trả về {len(api_scenes)} scenes, expected {len(batch)}", "WARN")
+
+            # Validate: Check trùng lặp img_prompt
+            seen_prompts = set()
+            duplicate_count = 0
+            for s in api_scenes:
+                prompt = s.get("img_prompt", "")[:100]  # Check 100 chars đầu
+                if prompt in seen_prompts:
+                    duplicate_count += 1
+                seen_prompts.add(prompt)
+
+            if duplicate_count > 0:
+                self._log(f"  ⚠️ Phát hiện {duplicate_count} prompts trùng lặp trong batch!", "WARN")
+                # Nếu >50% trùng lặp, có thể API bị lỗi - skip batch này
+                if duplicate_count > len(api_scenes) * 0.5:
+                    self._log(f"  ERROR: >50% prompts trùng lặp, skip batch!", "ERROR")
+                    continue
+
             # Save scenes to Excel
             try:
-                for scene_data in data["scenes"]:
+                for scene_data in api_scenes:
                     # Đảm bảo scene_id là integer (không phải 1.0, 2.0...)
                     scene_id = scene_data.get("scene_id")
                     scene_id = int(scene_id) if scene_id else 0
