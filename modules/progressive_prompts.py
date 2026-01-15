@@ -329,6 +329,13 @@ STORY:
 For each character, provide:
 1. portrait_prompt: Full description for generating a reference portrait (white background, portrait style)
 2. character_lock: Short 10-15 word description to use in scene prompts (for consistency)
+3. is_minor: TRUE if character is under 18 years old (child, teenager, baby, infant, etc.)
+
+IMPORTANT: Identify minors accurately based on context clues:
+- Age mentions (e.g., "5-year-old", "teenager", "16 years old")
+- Role descriptions (e.g., "son", "daughter", "child", "kid", "baby", "infant", "toddler")
+- School context (e.g., "student", "high school", "elementary")
+- Any character described as young, minor, underage, or child-like
 
 Return JSON only:
 {{
@@ -339,7 +346,8 @@ Return JSON only:
             "role": "protagonist/antagonist/supporting/narrator",
             "portrait_prompt": "detailed portrait description for image generation, white background",
             "character_lock": "short description for scene prompts (10-15 words)",
-            "vietnamese_description": "Mô tả tiếng Việt"
+            "vietnamese_description": "Mô tả tiếng Việt",
+            "is_minor": false
         }}
     ]
 }}
@@ -359,8 +367,15 @@ Return JSON only:
 
         # Save to Excel
         try:
+            minor_count = 0
             for char_data in data["characters"]:
                 char_id = char_data.get("id", "")
+
+                # Detect trẻ vị thành niên (dưới 18 tuổi)
+                is_minor = char_data.get("is_minor", False)
+                if isinstance(is_minor, str):
+                    is_minor = is_minor.lower() in ("true", "yes", "1")
+
                 char = Character(
                     id=char_id,
                     name=char_data.get("name", ""),
@@ -368,14 +383,22 @@ Return JSON only:
                     english_prompt=char_data.get("portrait_prompt", ""),
                     character_lock=char_data.get("character_lock", ""),
                     vietnamese_prompt=char_data.get("vietnamese_description", ""),
-                    image_file=f"{char_id}.png",  # Gán image_file = {id}.png
+                    image_file=f"{char_id}.png",
+                    is_child=is_minor,
+                    status="skip" if is_minor else "pending",  # Skip tạo ảnh cho trẻ em
                 )
                 workbook.add_character(char)
 
+                if is_minor:
+                    minor_count += 1
+
             workbook.save()
             self._log(f"  -> Saved {len(data['characters'])} characters to Excel")
+            if minor_count > 0:
+                self._log(f"  -> ⚠️ {minor_count} characters là trẻ em (sẽ KHÔNG tạo ảnh)")
             for c in data["characters"][:3]:
-                self._log(f"     - {c.get('name', 'N/A')} ({c.get('role', 'N/A')})")
+                minor_tag = " [MINOR]" if c.get("is_minor") else ""
+                self._log(f"     - {c.get('name', 'N/A')} ({c.get('role', 'N/A')}){minor_tag}")
             if len(data["characters"]) > 3:
                 self._log(f"     ... và {len(data['characters']) - 3} characters khác")
 
