@@ -497,7 +497,7 @@ Return JSON only:
             "role": "protagonist/antagonist/supporting/narrator",
             "portrait_prompt": "detailed portrait description for image generation, white background",
             "character_lock": "short description for scene prompts (10-15 words)",
-            "vietnamese_description": "Mô tả tiếng Việt",
+            "vietnamese_description": "Optional alternate description",
             "is_minor": false
         }}
     ]
@@ -843,7 +843,7 @@ Rules:
 2. Group SRT entries by visual moment, but if content > 8s, you MUST split with PURPOSE
 3. Follow the STORY SEGMENTS plan for content distribution
 4. CRITICAL: characters_used and location_used MUST use EXACT IDs from the lists above!
-   - characters_used: comma-separated IDs like "nv_hoang, nv_linh" (from CHARACTERS list)
+   - characters_used: comma-separated IDs like "nv_john, nv_sarah" (from CHARACTERS list)
    - location_used: single ID like "loc_office" (from LOCATIONS list)
    - Do NOT invent new IDs - only use what's provided!
 5. Create visual_moment description (what the viewer sees - be specific!)
