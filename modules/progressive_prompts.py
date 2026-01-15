@@ -908,13 +908,15 @@ Return JSON only:
             "id": "char_id",
             "name": "Character Name",
             "role": "protagonist/antagonist/supporting/narrator",
-            "portrait_prompt": "detailed portrait description for image generation, white background",
-            "character_lock": "short description for scene prompts (10-15 words)",
+            "portrait_prompt": "A cinematic portrait, medium close-up shot on 85mm lens. Subject is a 35-year-old Caucasian man with short brown hair, tired blue eyes, light stubble. Looking directly at camera with neutral expression. Bright studio lighting, fully illuminated face. Pure white studio background. 8K, sharp focus, photorealistic.",
+            "character_lock": "35-year-old Caucasian man, short brown hair, tired blue eyes, light stubble",
             "vietnamese_description": "Optional alternate description",
             "is_minor": false
         }}
     ]
 }}
+
+IMPORTANT: Use "Caucasian" for ethnicity in portrait_prompt (American audience). Only use other ethnicities if explicitly mentioned in story.
 """
 
         # Call API
