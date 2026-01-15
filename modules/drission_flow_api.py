@@ -1671,6 +1671,7 @@ class DrissionFlowAPI:
             deleted = False
 
             # 2. Nếu dùng Chrome Portable → xóa thư mục Data
+            data_dir = None
             if hasattr(self, '_chrome_portable') and self._chrome_portable:
                 chrome_exe = Path(os.path.expandvars(self._chrome_portable))
                 data_dir = chrome_exe.parent / "Data"
@@ -1693,7 +1694,52 @@ class DrissionFlowAPI:
                 except Exception as e:
                     self.log(f"  ⚠️ Could not delete profile: {e}", "WARN")
 
-            # 4. Reset tất cả flags
+            # 4. Tạo lại cấu trúc tối thiểu để skip first-run dialogs
+            if deleted and data_dir:
+                try:
+                    import json
+                    # Tạo thư mục Data và profile
+                    profile_path = data_dir / "profile" / "Default"
+                    profile_path.mkdir(parents=True, exist_ok=True)
+
+                    # File First Run - để Chrome biết đã chạy lần đầu
+                    (data_dir / "profile" / "First Run").touch()
+
+                    # Local State - disable các popup
+                    local_state = {
+                        "browser": {
+                            "enabled_labs_experiments": [],
+                            "has_seen_welcome_page": True
+                        },
+                        "privacy_sandbox": {
+                            "m1": {
+                                "prompt_suppressed": True,
+                                "row_notice_acknowledged": True
+                            }
+                        }
+                    }
+                    (data_dir / "profile" / "Local State").write_text(json.dumps(local_state))
+
+                    # Preferences - skip các dialogs
+                    prefs = {
+                        "browser": {
+                            "has_seen_welcome_page": True,
+                            "show_home_button": False
+                        },
+                        "signin": {
+                            "allowed": False
+                        },
+                        "profile": {
+                            "default_content_setting_values": {}
+                        }
+                    }
+                    (profile_path / "Preferences").write_text(json.dumps(prefs))
+
+                    self.log("  ✓ Created minimal profile (skip first-run dialogs)")
+                except Exception as e:
+                    self.log(f"  ⚠️ Could not create minimal profile: {e}", "WARN")
+
+            # 5. Reset tất cả flags
             self._ready = False
             self._t2v_mode_selected = False
             self._image_mode_selected = False
