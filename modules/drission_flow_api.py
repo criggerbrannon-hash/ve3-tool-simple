@@ -1861,7 +1861,9 @@ class DrissionFlowAPI:
         for nav_attempt in range(max_nav_retries):
             try:
                 self.driver.get(target_url)
-                time.sleep(3)
+                # IPv6 cần thời gian load lâu hơn
+                wait_time = 6 if getattr(self, '_ipv6_activated', False) else 3
+                time.sleep(wait_time)
 
                 # Kiểm tra xem trang có load được không
                 current_url = self.driver.url
@@ -2175,55 +2177,77 @@ class DrissionFlowAPI:
         self.log("[TEXTAREA] ✗ Không tìm thấy textarea", "ERROR")
         return False
 
-    def _wait_for_page_ready(self, timeout: int = 30) -> bool:
+    def _get_page_load_timeout(self) -> int:
+        """Get appropriate timeout based on connection mode (IPv6 slower than IPv4)."""
+        if getattr(self, '_ipv6_activated', False):
+            return 45  # IPv6 cần thời gian lâu hơn
+        return 30
+
+    def _wait_for_page_ready(self, timeout: int = None, max_refresh: int = 2) -> bool:
         """
         Đợi page load xong sau khi bị refresh.
         Kiểm tra document.readyState và có thể truy cập DOM.
         Nếu phát hiện logout → tự động login lại.
+        IPv6 mode: timeout lâu hơn, tự động F5 nếu không load được.
 
         Args:
-            timeout: Timeout tối đa (giây)
+            timeout: Timeout tối đa (giây), None = auto based on IPv6
+            max_refresh: Số lần F5 tối đa nếu timeout
 
         Returns:
             True nếu page đã sẵn sàng
         """
-        self.log("[PAGE] Đợi page load sau refresh...")
-        for i in range(timeout):
-            try:
-                # === KIỂM TRA LOGOUT TRƯỚC ===
-                if self._is_logged_out():
-                    self.log("[PAGE] ⚠️ Phát hiện bị LOGOUT!")
-                    if self._auto_login_google():
-                        self.log("[PAGE] ✓ Đã login lại thành công!")
-                        # Sau khi login, cần navigate lại trang project
-                        return False  # Return False để trigger retry từ setup()
-                    else:
-                        self.log("[PAGE] ✗ Login lại thất bại", "ERROR")
-                        return False
+        if timeout is None:
+            timeout = self._get_page_load_timeout()
 
-                # Kiểm tra page ready state
-                ready_state = self.driver.run_js("return document.readyState")
-                if ready_state == "complete":
-                    # Thử tìm element cơ bản để đảm bảo DOM sẵn sàng
-                    if self._find_textarea():
-                        self.log("[PAGE] ✓ Page đã sẵn sàng!")
-                        return True
-                    # Nếu không có textarea, đợi thêm
+        for refresh_count in range(max_refresh + 1):
+            self.log(f"[PAGE] Đợi page load... (timeout={timeout}s, lần {refresh_count + 1})")
+
+            for i in range(timeout):
+                try:
+                    # === KIỂM TRA LOGOUT TRƯỚC ===
+                    if self._is_logged_out():
+                        self.log("[PAGE] ⚠️ Phát hiện bị LOGOUT!")
+                        if self._auto_login_google():
+                            self.log("[PAGE] ✓ Đã login lại thành công!")
+                            return False  # Return False để trigger retry từ setup()
+                        else:
+                            self.log("[PAGE] ✗ Login lại thất bại", "ERROR")
+                            return False
+
+                    # Kiểm tra page ready state
+                    ready_state = self.driver.run_js("return document.readyState")
+                    if ready_state == "complete":
+                        # Thử tìm element cơ bản để đảm bảo DOM sẵn sàng
+                        if self._find_textarea():
+                            self.log("[PAGE] ✓ Page đã sẵn sàng!")
+                            return True
+                        # Nếu không có textarea, đợi thêm
+                        time.sleep(1)
+                except Exception as e:
+                    # Page vẫn đang load, đợi tiếp
                     time.sleep(1)
-            except Exception as e:
-                # Page vẫn đang load, đợi tiếp
-                time.sleep(1)
 
-        # === TIMEOUT: Kiểm tra logout lần cuối ===
-        if self._is_logged_out():
-            self.log("[PAGE] ⚠️ Timeout do bị LOGOUT!")
-            if self._auto_login_google():
-                self.log("[PAGE] ✓ Đã login lại!")
-                return False  # Return False để trigger retry
-            else:
-                self.log("[PAGE] ✗ Login lại thất bại", "ERROR")
+            # === TIMEOUT: Kiểm tra logout lần cuối ===
+            if self._is_logged_out():
+                self.log("[PAGE] ⚠️ Timeout do bị LOGOUT!")
+                if self._auto_login_google():
+                    self.log("[PAGE] ✓ Đã login lại!")
+                    return False
+                else:
+                    self.log("[PAGE] ✗ Login lại thất bại", "ERROR")
+                    return False
 
-        self.log("[PAGE] ⚠️ Timeout đợi page load", "WARN")
+            # === TIMEOUT: F5 refresh nếu còn lượt ===
+            if refresh_count < max_refresh:
+                self.log(f"[PAGE] ⚠️ Timeout - F5 refresh để load lại...")
+                try:
+                    self.driver.refresh()
+                    time.sleep(5)  # Đợi sau F5 (IPv6 cần lâu hơn)
+                except Exception as e:
+                    self.log(f"[PAGE] F5 error: {e}")
+
+        self.log("[PAGE] ⚠️ Timeout đợi page load (sau nhiều lần F5)", "WARN")
         return False
 
     def _safe_run_js(self, script: str, max_retries: int = 3, default=None):
@@ -3186,14 +3210,31 @@ class DrissionFlowAPI:
         try:
             if self.driver:
                 self.driver.refresh()
-                # Đợi page load hoàn toàn
-                time.sleep(3)
-                # Đợi textarea xuất hiện (page đã load xong)
-                for _ in range(10):
+                # IPv6 cần thời gian load lâu hơn
+                wait_time = 6 if getattr(self, '_ipv6_activated', False) else 3
+                time.sleep(wait_time)
+
+                # Đợi textarea xuất hiện (page đã load xong) - IPv6 cần nhiều lần thử hơn
+                max_tries = 20 if getattr(self, '_ipv6_activated', False) else 10
+                textarea_found = False
+                for i in range(max_tries):
                     textarea = self.driver.ele("tag:textarea", timeout=1)
                     if textarea:
+                        textarea_found = True
                         break
                     time.sleep(0.5)
+
+                # Nếu không tìm thấy textarea sau nhiều lần → F5 lại
+                if not textarea_found and getattr(self, '_ipv6_activated', False):
+                    self.log("⚠️ IPv6: Textarea chưa load, F5 lại...")
+                    self.driver.refresh()
+                    time.sleep(wait_time)
+                    for _ in range(max_tries):
+                        textarea = self.driver.ele("tag:textarea", timeout=1)
+                        if textarea:
+                            break
+                        time.sleep(0.5)
+
                 # Re-inject JS Interceptor sau khi refresh (bị mất sau F5)
                 self._reset_tokens()
                 self.driver.run_js(JS_INTERCEPTOR)
@@ -3862,14 +3903,31 @@ class DrissionFlowAPI:
                 if self.driver:
                     self.log("[VIDEO] 🔄 F5 refresh để tránh 403...")
                     self.driver.refresh()
-                    # Đợi page load hoàn toàn
-                    time.sleep(3)
-                    # Đợi textarea xuất hiện (page đã load xong)
-                    for _ in range(10):
+                    # IPv6 cần thời gian load lâu hơn
+                    wait_time = 6 if getattr(self, '_ipv6_activated', False) else 3
+                    time.sleep(wait_time)
+
+                    # Đợi textarea xuất hiện (page đã load xong) - IPv6 cần nhiều lần thử hơn
+                    max_tries = 20 if getattr(self, '_ipv6_activated', False) else 10
+                    textarea_found = False
+                    for _ in range(max_tries):
                         textarea = self.driver.ele("tag:textarea", timeout=1)
                         if textarea:
+                            textarea_found = True
                             break
                         time.sleep(0.5)
+
+                    # Nếu không tìm thấy textarea sau nhiều lần → F5 lại
+                    if not textarea_found and getattr(self, '_ipv6_activated', False):
+                        self.log("[VIDEO] ⚠️ IPv6: Textarea chưa load, F5 lại...")
+                        self.driver.refresh()
+                        time.sleep(wait_time)
+                        for _ in range(max_tries):
+                            textarea = self.driver.ele("tag:textarea", timeout=1)
+                            if textarea:
+                                break
+                            time.sleep(0.5)
+
                     # Re-inject JS Interceptor sau khi refresh (bị mất sau F5)
                     self._reset_tokens()
                     self.driver.run_js(JS_INTERCEPTOR)
