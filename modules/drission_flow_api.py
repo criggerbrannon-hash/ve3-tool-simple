@@ -2147,20 +2147,26 @@ class DrissionFlowAPI:
                 pass
         return None
 
-    def _wait_for_textarea_visible(self, timeout: int = 10, max_refresh: int = 2) -> bool:
+    def _wait_for_textarea_visible(self, timeout: int = None, max_refresh: int = 3) -> bool:
         """
         Đợi textarea xuất hiện trước khi click.
-        Cách đơn giản: dùng DrissionPage ele() với timeout.
+        Textarea là dấu hiệu page đã load xong.
+        IPv6 cần thời gian lâu hơn - tự động F5 nếu không thấy.
         """
+        # IPv6 cần timeout dài hơn
+        if timeout is None:
+            timeout = 20 if getattr(self, '_ipv6_activated', False) else 10
+
         for refresh_count in range(max_refresh + 1):
-            self.log(f"[TEXTAREA] Đợi textarea... (lần {refresh_count + 1})")
+            self.log(f"[TEXTAREA] Đợi textarea... (timeout={timeout}s, lần {refresh_count + 1}/{max_refresh + 1})")
 
             try:
-                # Cách đơn giản: dùng DrissionPage tìm textarea
+                # Dùng DrissionPage tìm textarea
                 textarea = self.driver.ele('tag:textarea', timeout=timeout)
                 if textarea:
                     self.log(f"[TEXTAREA] ✓ Tìm thấy textarea")
-                    time.sleep(0.5)  # Đợi thêm để chắc chắn ready
+                    # Đợi thêm để chắc chắn có thể tương tác
+                    time.sleep(1 if getattr(self, '_ipv6_activated', False) else 0.5)
                     return True
             except Exception as e:
                 self.log(f"[TEXTAREA] Chưa thấy: {e}")
@@ -2170,7 +2176,9 @@ class DrissionFlowAPI:
                 self.log(f"[TEXTAREA] ⚠️ Không thấy textarea, F5 refresh...")
                 try:
                     self.driver.refresh()
-                    time.sleep(3)
+                    # IPv6 cần đợi lâu hơn sau F5
+                    wait_time = 6 if getattr(self, '_ipv6_activated', False) else 3
+                    time.sleep(wait_time)
                 except Exception as e:
                     self.log(f"[TEXTAREA] Refresh error: {e}")
 
@@ -3210,30 +3218,9 @@ class DrissionFlowAPI:
         try:
             if self.driver:
                 self.driver.refresh()
-                # IPv6 cần thời gian load lâu hơn
-                wait_time = 6 if getattr(self, '_ipv6_activated', False) else 3
-                time.sleep(wait_time)
-
-                # Đợi textarea xuất hiện (page đã load xong) - IPv6 cần nhiều lần thử hơn
-                max_tries = 20 if getattr(self, '_ipv6_activated', False) else 10
-                textarea_found = False
-                for i in range(max_tries):
-                    textarea = self.driver.ele("tag:textarea", timeout=1)
-                    if textarea:
-                        textarea_found = True
-                        break
-                    time.sleep(0.5)
-
-                # Nếu không tìm thấy textarea sau nhiều lần → F5 lại
-                if not textarea_found and getattr(self, '_ipv6_activated', False):
-                    self.log("⚠️ IPv6: Textarea chưa load, F5 lại...")
-                    self.driver.refresh()
-                    time.sleep(wait_time)
-                    for _ in range(max_tries):
-                        textarea = self.driver.ele("tag:textarea", timeout=1)
-                        if textarea:
-                            break
-                        time.sleep(0.5)
+                # Đợi textarea xuất hiện = page load xong (tự động F5 nếu không thấy)
+                if not self._wait_for_textarea_visible():
+                    self.log("⚠️ Không thấy textarea sau nhiều lần F5", "WARN")
 
                 # Re-inject JS Interceptor sau khi refresh (bị mất sau F5)
                 self._reset_tokens()
@@ -3903,30 +3890,9 @@ class DrissionFlowAPI:
                 if self.driver:
                     self.log("[VIDEO] 🔄 F5 refresh để tránh 403...")
                     self.driver.refresh()
-                    # IPv6 cần thời gian load lâu hơn
-                    wait_time = 6 if getattr(self, '_ipv6_activated', False) else 3
-                    time.sleep(wait_time)
-
-                    # Đợi textarea xuất hiện (page đã load xong) - IPv6 cần nhiều lần thử hơn
-                    max_tries = 20 if getattr(self, '_ipv6_activated', False) else 10
-                    textarea_found = False
-                    for _ in range(max_tries):
-                        textarea = self.driver.ele("tag:textarea", timeout=1)
-                        if textarea:
-                            textarea_found = True
-                            break
-                        time.sleep(0.5)
-
-                    # Nếu không tìm thấy textarea sau nhiều lần → F5 lại
-                    if not textarea_found and getattr(self, '_ipv6_activated', False):
-                        self.log("[VIDEO] ⚠️ IPv6: Textarea chưa load, F5 lại...")
-                        self.driver.refresh()
-                        time.sleep(wait_time)
-                        for _ in range(max_tries):
-                            textarea = self.driver.ele("tag:textarea", timeout=1)
-                            if textarea:
-                                break
-                            time.sleep(0.5)
+                    # Đợi textarea xuất hiện = page load xong (tự động F5 nếu không thấy)
+                    if not self._wait_for_textarea_visible():
+                        self.log("[VIDEO] ⚠️ Không thấy textarea sau nhiều lần F5", "WARN")
 
                     # Re-inject JS Interceptor sau khi refresh (bị mất sau F5)
                     self._reset_tokens()
