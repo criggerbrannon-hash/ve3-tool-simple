@@ -1030,12 +1030,50 @@ Return JSON only:
                     time.sleep(2 ** retry)
 
             if not data or "scenes" not in data:
-                self._log(f"  ERROR: Batch {batch_idx+1} failed after {MAX_RETRIES} retries, skipping!", "ERROR")
-                continue
+                # FALLBACK: Tạo basic scenes từ SRT entries khi API fail
+                self._log(f"  WARNING: Batch {batch_idx+1} failed, creating fallback scenes...", "WARNING")
 
-            # Thêm scenes vào kết quả
-            batch_scenes = data["scenes"]
-            self._log(f"     -> Got {len(batch_scenes)} scenes from this batch")
+                batch_scenes = []
+                # Nhóm ~5 entries thành 1 scene
+                entries_per_scene = 5
+                for i in range(0, len(batch_entries), entries_per_scene):
+                    group = batch_entries[i:i + entries_per_scene]
+                    if not group:
+                        continue
+
+                    first_idx, first_entry = group[0]
+                    last_idx, last_entry = group[-1]
+
+                    # Tính duration
+                    try:
+                        def parse_ts(ts):
+                            parts = ts.replace(',', ':').split(':')
+                            return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2]) + int(parts[3])/1000
+                        duration = parse_ts(last_entry.end_time) - parse_ts(first_entry.start_time)
+                    except:
+                        duration = len(group) * 3  # ~3s per entry
+
+                    fallback_scene = {
+                        "scene_id": scene_id_counter + len(batch_scenes),
+                        "srt_indices": [idx + 1 for idx, _ in group],
+                        "srt_start": first_entry.start_time,
+                        "srt_end": last_entry.end_time,
+                        "duration": round(duration, 2),
+                        "srt_text": " ".join([e.text for _, e in group]),
+                        "visual_moment": f"[Auto-generated] Scene covering SRT {first_idx+1}-{last_idx+1}",
+                        "characters_used": "",
+                        "location_used": "",
+                        "camera": "Medium shot",
+                        "lighting": "Natural lighting"
+                    }
+                    batch_scenes.append(fallback_scene)
+
+                self._log(f"     -> Created {len(batch_scenes)} fallback scenes")
+
+            else:
+                # Thêm scenes từ API
+                batch_scenes = data["scenes"]
+                self._log(f"     -> Got {len(batch_scenes)} scenes from API")
 
             # POST-PROCESS: Chia scenes quá dài một cách nghệ thuật
             # Target ~8s, nhưng linh hoạt - chỉ split khi thực sự cần
