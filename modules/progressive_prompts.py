@@ -756,7 +756,7 @@ Return JSON only:
                 loc_locks.append(f"- {loc.id}: {loc.location_lock}")
 
         # Chia SRT entries thành batches dựa vào độ dài ký tự
-        MAX_BATCH_CHARS = 10000  # Tối đa ~10000 ký tự mỗi batch
+        MAX_BATCH_CHARS = 6000  # Giảm xuống ~6000 ký tự để API tạo đủ scenes
         all_scenes = []
         scene_id_counter = 1
 
@@ -802,12 +802,27 @@ Return JSON only:
                 srt_text += f"[{original_idx+1}] {entry.start_time} --> {entry.end_time}\n{entry.text}\n\n"
 
             # Build prompt
-            # Tính số ảnh dự kiến cho batch này dựa trên segments
-            expected_images_hint = ""
-            if total_planned_images > 0:
-                batch_ratio = len(batch_entries) / total_entries
-                expected_for_batch = int(total_planned_images * batch_ratio)
-                expected_images_hint = f"\nEXPECTED SCENES FOR THIS BATCH: approximately {expected_for_batch} scenes"
+            # Tính số ảnh dự kiến cho batch này dựa trên segments và thời gian
+            batch_duration = 0
+            for _, entry in batch_entries:
+                try:
+                    # Parse duration từ timestamps
+                    start = entry.start_time.replace(',', ':').split(':')
+                    end = entry.end_time.replace(',', ':').split(':')
+                    start_sec = int(start[0])*3600 + int(start[1])*60 + int(start[2]) + int(start[3])/1000
+                    end_sec = int(end[0])*3600 + int(end[1])*60 + int(end[2]) + int(end[3])/1000
+                    batch_duration = max(batch_duration, end_sec)
+                except:
+                    pass
+
+            # Tính expected scenes: mỗi scene ~5s
+            expected_scenes = max(3, int(batch_duration / 5) if batch_duration else len(batch_entries) // 4)
+            expected_images_hint = f"""
+CRITICAL - SCENE COUNT:
+- This batch spans approximately {batch_duration:.0f} seconds
+- You MUST create approximately {expected_scenes} scenes (target: 5 seconds per scene)
+- Each scene MUST be 3-8 seconds, NEVER longer!
+- If you create fewer scenes, each will be too long (BAD!)"""
 
             prompt = f"""Create a director's shooting plan by dividing the SRT into visual scenes.
 
@@ -825,16 +840,15 @@ SRT ENTRIES (indices {batch_start+1} to {batch_end+1}):
 {expected_images_hint}
 
 Rules:
-1. Each scene MUST be between 3-8 seconds. NEVER exceed 8 seconds!
-   - If SRT entries span >8s, split into multiple scenes
-   - Prefer shorter scenes (3-5s) over longer ones
-2. Group SRT entries that belong to the same visual moment
-3. Follow the STORY SEGMENTS plan for how many images each part needs
-4. Assign appropriate characters and locations to each scene
-5. Create a visual_moment description (what the viewer sees)
-6. scene_id should start from {scene_id_counter}
-7. srt_indices should use the ORIGINAL indices shown in brackets [N]
-8. IMPORTANT: Duration is calculated from srt_start to srt_end, keep it <= 8 seconds
+1. STRICT: Each scene MUST be 3-8 seconds. Scenes >8s are INVALID and will be rejected!
+2. Create MORE scenes rather than fewer - aim for ~5 seconds per scene
+3. Group SRT entries that belong to the same visual moment
+4. Follow the STORY SEGMENTS plan for content distribution
+5. Assign appropriate characters and locations to each scene
+6. Create a visual_moment description (what the viewer sees)
+7. scene_id should start from {scene_id_counter}
+8. srt_indices should use the ORIGINAL indices shown in brackets [N]
+9. Duration = time from srt_start to srt_end, MUST be <= 8 seconds
 
 Return JSON only:
 {{
@@ -872,14 +886,32 @@ Return JSON only:
             batch_scenes = data["scenes"]
             self._log(f"     -> Got {len(batch_scenes)} scenes from this batch")
 
-            # Validate duration - cảnh báo nếu > 8s
+            # AUTO-SPLIT: Chia nhỏ scenes có duration > 8s
+            processed_scenes = []
             for scene in batch_scenes:
                 duration = scene.get("duration", 0)
                 if duration and duration > 8:
-                    self._log(f"     ⚠️ Scene {scene.get('scene_id')}: duration={duration}s > 8s!", "WARN")
+                    # Tính số scenes cần chia
+                    num_splits = int(duration / 6) + 1  # Target ~6s mỗi scene
+                    split_duration = duration / num_splits
+
+                    self._log(f"     ⚠️ Scene {scene.get('scene_id')}: {duration:.1f}s → chia thành {num_splits} scenes ({split_duration:.1f}s mỗi scene)")
+
+                    # Chia scene thành nhiều scenes nhỏ
+                    for i in range(num_splits):
+                        split_scene = scene.copy()
+                        split_scene["duration"] = round(split_duration, 2)
+                        # Điều chỉnh visual_moment cho mỗi phần
+                        if i == 0:
+                            split_scene["visual_moment"] = f"[Part 1/{num_splits}] " + scene.get("visual_moment", "")
+                        else:
+                            split_scene["visual_moment"] = f"[Part {i+1}/{num_splits}] Continuation - " + scene.get("visual_moment", "")[:100]
+                        processed_scenes.append(split_scene)
+                else:
+                    processed_scenes.append(scene)
 
             # Cập nhật scene_id để liên tục
-            for scene in batch_scenes:
+            for scene in processed_scenes:
                 scene["scene_id"] = scene_id_counter
                 all_scenes.append(scene)
                 scene_id_counter += 1
