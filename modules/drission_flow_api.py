@@ -2028,49 +2028,6 @@ class DrissionFlowAPI:
                         self.log(f"  → New project URL saved")
             else:
                 self.log("✓ Đã ở trong project!")
-                # Chọn "Tạo hình ảnh" từ dropdown - với retry khi page refresh
-                # SKIP nếu skip_mode_selection=True (cho Chrome 2 video - sẽ switch T2V mode sau)
-                if not skip_mode_selection:
-                    self.log("Chọn mode 'Tạo hình ảnh'...")
-                    time.sleep(1)
-                    select_success = False
-                    for retry_count in range(3):  # Retry tối đa 3 lần nếu page refresh
-                        try:
-                            for j in range(10):
-                                result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
-                                if result == 'CLICKED':
-                                    self.log("✓ Chọn 'Tạo hình ảnh' thành công!")
-                                    time.sleep(1)
-                                    select_success = True
-                                    break
-                                elif result == 'NO_DROPDOWN':
-                                    self.log(f"  [Mode] Không tìm thấy dropdown (lần {j+1}/10)")
-                                elif result == 'NOT_FOUND':
-                                    self.log(f"  [Mode] Không tìm thấy option 'Tạo hình ảnh' (lần {j+1}/10)")
-                                else:
-                                    self.log(f"  [Mode] Result: {result} (lần {j+1}/10)")
-                                time.sleep(0.5)
-                            if select_success:
-                                break
-                            else:
-                                self.log(f"[Mode] ⚠️ Không chọn được mode sau 10 lần thử (retry {retry_count+1}/3)", "WARN")
-                        except Exception as e:
-                            if ContextLostError and isinstance(e, ContextLostError):
-                                self.log(f"[PAGE] ⚠️ Page bị refresh, đợi load lại... (retry {retry_count + 1}/3)")
-                                if self._wait_for_page_ready(timeout=30):
-                                    continue  # Retry sau khi page load xong
-                                else:
-                                    self.log("[PAGE] ✗ Timeout đợi page, thử lại...", "WARN")
-                                    continue
-                            else:
-                                self.log(f"[PAGE] ⚠️ Lỗi: {e}", "WARN")
-                                break
-
-                    if not select_success:
-                        self.log("[Mode] ⚠️ KHÔNG CHỌN ĐƯỢC MODE - tiếp tục dù sao...", "WARN")
-                else:
-                    self.log("⏭️ Skip mode selection (video mode)")
-                    time.sleep(1)
 
         # 5. Đợi textarea sẵn sàng - TEXTAREA = page đã load xong
         # IPv6 cần thời gian lâu hơn, tự động F5 nếu không thấy
@@ -2102,6 +2059,49 @@ class DrissionFlowAPI:
                 return False
 
         self.log("✓ Project đã sẵn sàng (textarea visible)!")
+
+        # 5.5. Chọn mode "Tạo hình ảnh" - SAU KHI page đã load xong
+        # SKIP nếu skip_mode_selection=True (cho Chrome 2 video - sẽ switch T2V mode sau)
+        if not skip_mode_selection:
+            self.log("Chọn mode 'Tạo hình ảnh'...")
+            time.sleep(0.5)
+            select_success = False
+            for retry_count in range(3):  # Retry tối đa 3 lần nếu page refresh
+                try:
+                    for j in range(10):
+                        result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+                        if result == 'CLICKED':
+                            self.log("✓ Chọn 'Tạo hình ảnh' thành công!")
+                            time.sleep(0.5)
+                            select_success = True
+                            break
+                        elif result == 'NO_DROPDOWN':
+                            self.log(f"  [Mode] Không tìm thấy dropdown (lần {j+1}/10)")
+                        elif result == 'NOT_FOUND':
+                            self.log(f"  [Mode] Không tìm thấy option 'Tạo hình ảnh' (lần {j+1}/10)")
+                        else:
+                            self.log(f"  [Mode] Result: {result} (lần {j+1}/10)")
+                        time.sleep(0.5)
+                    if select_success:
+                        break
+                    else:
+                        self.log(f"[Mode] ⚠️ Không chọn được mode sau 10 lần thử (retry {retry_count+1}/3)", "WARN")
+                except Exception as e:
+                    if ContextLostError and isinstance(e, ContextLostError):
+                        self.log(f"[PAGE] ⚠️ Page bị refresh, đợi load lại... (retry {retry_count + 1}/3)")
+                        if self._wait_for_page_ready(timeout=30):
+                            continue
+                        else:
+                            self.log("[PAGE] ✗ Timeout đợi page, thử lại...", "WARN")
+                            continue
+                    else:
+                        self.log(f"[PAGE] ⚠️ Lỗi: {e}", "WARN")
+                        break
+
+            if not select_success:
+                self.log("[Mode] ⚠️ KHÔNG CHỌN ĐƯỢC MODE - tiếp tục dù sao...", "WARN")
+        else:
+            self.log("⏭️ Skip mode selection (video mode)")
 
         # 6. Warm up session (tạo 1 ảnh trong Chrome để activate)
         if warm_up:
