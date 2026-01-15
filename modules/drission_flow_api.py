@@ -3263,20 +3263,18 @@ class DrissionFlowAPI:
                 new_tab = self.driver.new_tab(current_url)
                 time.sleep(1)
 
-                # ĐÓNG TAB CŨ NGAY LẬP TỨC
+                # Activate tab mới TRƯỚC KHI đóng tab cũ
+                self.log("   → Activating new tab...")
+                new_tab.set.activate()
+                time.sleep(1)
+
+                # ĐÓNG TAB CŨ
                 if old_tab_id:
                     self.log(f"   → Closing old tab {old_tab_id}...")
                     try:
                         self.driver.close_tabs(old_tab_id)
                     except:
                         pass
-                    time.sleep(1)
-
-                # Switch driver sang tab còn lại (tab mới)
-                if self.driver.tab_ids:
-                    remaining_tab_id = self.driver.tab_ids[0]
-                    self.log(f"   → Switch to tab: {remaining_tab_id}")
-                    self.driver.to_tab(remaining_tab_id)
                     time.sleep(1)
 
                 # Đợi page load
