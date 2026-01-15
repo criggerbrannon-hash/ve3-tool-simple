@@ -2294,7 +2294,7 @@ class DrissionFlowAPI:
 
     def _paste_prompt_ctrlv(self, textarea, prompt: str) -> bool:
         """
-        Nhập prompt bằng cách GÕ thủ công (không dùng Ctrl+V).
+        Nhập prompt bằng cách GÕ từng ký tự như người thật.
         Tránh bị 403 do bot detection.
 
         Args:
@@ -2314,7 +2314,7 @@ class DrissionFlowAPI:
             # 2. Click vào textarea để focus
             try:
                 textarea.click()
-                time.sleep(0.3)
+                time.sleep(0.5)
             except:
                 pass
 
@@ -2324,15 +2324,18 @@ class DrissionFlowAPI:
                 textarea.input(Keys.CTRL_A)
                 time.sleep(0.1)
                 textarea.input(Keys.DELETE)
-                time.sleep(0.1)
+                time.sleep(0.2)
             except:
                 pass
 
-            # 4. GÕ prompt thủ công (thay vì Ctrl+V)
-            textarea.input(prompt)
-            time.sleep(0.3)
+            # 4. GÕ từng ký tự bằng actions (giả lập keyboard thật)
+            self.log(f"→ Đang gõ prompt ({len(prompt)} chars)...")
 
-            self.log(f"→ Typed prompt ({len(prompt)} chars) ✓")
+            # Dùng actions.type() để gõ như người thật
+            self.driver.actions.type(prompt)
+
+            time.sleep(0.5)
+            self.log(f"→ Gõ xong ✓")
             return True
 
         except Exception as e:
