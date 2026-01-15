@@ -3248,34 +3248,29 @@ class DrissionFlowAPI:
                         except Exception as e:
                             self.log(f"✗ Download failed: {e}", "WARN")
 
-        # Mở tab mới với URL, đóng tab cũ (giống pattern image download)
+        # Mở tab mới với URL (không đóng tab cũ để tránh mất kết nối)
         self.log("🔄 Opening new tab...")
         try:
             if self.driver:
-                # Lưu URL và tab cũ
                 current_url = self.driver.url
-                old_tab = self.driver.get_tab()
                 self.log(f"   URL: {current_url}")
 
                 # Mở tab mới với URL
                 new_tab = self.driver.new_tab(current_url)
-                new_tab.set.activate()
-                self.log("   → New tab opened & activated")
-                time.sleep(2)
+                self.log("   → New tab created")
 
-                # Đóng tab cũ
-                self.log("   → Closing old tab...")
-                old_tab.close()
-                time.sleep(1)
-
-                # Đợi page load
-                self.log("   → Waiting for page load...")
+                # Đợi page load trong tab mới
                 time.sleep(3)
 
-                # Inject JS vào tab mới
-                self.log("   → Injecting JS...")
+                # Inject JS TRƯỚC KHI làm gì khác
+                self.log("   → Injecting JS to new tab...")
                 self._reset_tokens()
                 new_tab.run_js(JS_INTERCEPTOR)
+
+                # Activate tab mới
+                new_tab.set.activate()
+                self.log("   → Activated new tab")
+                time.sleep(1)
 
                 # Đợi textarea
                 if not self._wait_for_textarea_visible():
