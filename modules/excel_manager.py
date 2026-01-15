@@ -68,6 +68,7 @@ SCENES_COLUMNS = [
     "location_used",    # Location ID
     "reference_files",  # JSON list reference files cho image generation
     "media_id",         # Media ID từ Google Flow API (dùng cho I2V - Image to Video)
+    "video_type",       # Loại video: "i2v" = tạo video, "none" = không tạo video (chỉ ảnh)
 ]
 
 # Cột cho sheet Backup Characters (nhân vật narrator cố định cho fallback)
@@ -233,6 +234,7 @@ class Scene:
         location_used: str = "",        # Location ID used
         reference_files: str = "",      # JSON list of reference files
         media_id: str = "",             # Media ID từ Google Flow API (dùng cho I2V)
+        video_type: str = "i2v",        # Loại video: "i2v" = tạo video, "none" = không tạo (chỉ ảnh)
         # DEPRECATED - giữ để backward compatible, sẽ map sang srt_start/srt_end
         start_time: str = "",
         end_time: str = ""
@@ -256,6 +258,7 @@ class Scene:
         self.location_used = location_used
         self.reference_files = reference_files
         self.media_id = media_id  # Media ID cho I2V
+        self.video_type = video_type  # "i2v" hoặc "none"
 
         # DEPRECATED aliases (để code cũ không bị lỗi)
         self.start_time = self.srt_start
@@ -281,6 +284,7 @@ class Scene:
             "location_used": self.location_used,
             "reference_files": self.reference_files,
             "media_id": self.media_id,  # Media ID cho I2V
+            "video_type": self.video_type,  # "i2v" hoặc "none"
         }
     
     @classmethod
@@ -334,6 +338,7 @@ class Scene:
             location_used=str(data.get("location_used", "") or ""),
             reference_files=str(data.get("reference_files", "") or ""),
             media_id=str(data.get("media_id", "") or ""),  # Media ID cho I2V
+            video_type=str(data.get("video_type", "i2v") or "i2v"),  # "i2v" hoặc "none"
         )
 
 
@@ -778,9 +783,20 @@ class PromptWorkbook:
         return [s for s in scenes if s.status_img != "done" and s.img_prompt]
     
     def get_pending_video_scenes(self) -> List[Scene]:
-        """Lấy danh sách scenes chưa tạo video (nhưng đã có ảnh)."""
+        """Lấy danh sách scenes chưa tạo video (nhưng đã có ảnh).
+
+        Loại bỏ scenes có:
+        - video_type = "none" (không cần tạo video)
+        - status_vid = "skip" (bỏ qua video)
+        """
         scenes = self.get_scenes()
-        return [s for s in scenes if s.status_vid != "done" and s.img_path and s.video_prompt]
+        return [
+            s for s in scenes
+            if s.status_vid not in ("done", "skip")  # Chưa done và không skip
+            and s.img_path                            # Đã có ảnh
+            and s.video_prompt                        # Có video prompt
+            and getattr(s, 'video_type', 'i2v') != "none"  # video_type không phải "none"
+        ]
 
     # ========================================================================
     # DIRECTOR PLAN METHODS
@@ -1041,26 +1057,34 @@ class PromptWorkbook:
 
     def get_locations(self) -> List["Location"]:
         """
-        Đọc tất cả locations từ sheet locations.
+        Đọc locations từ characters sheet (role="location").
+        Locations được lưu trong characters sheet, không có sheet riêng.
 
         Returns:
             List[Location]
         """
-        self._ensure_locations_sheet()
-        ws = self.workbook[self.LOCATIONS_SHEET]
+        if self.workbook is None:
+            self.load_or_create()
+
+        ws = self.workbook[self.CHARACTERS_SHEET]
 
         locations = []
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0] is None:
                 continue
 
+            # Chỉ lấy các character có role="location"
+            role = row[1] or ""
+            if role.lower() != "location":
+                continue
+
             loc = Location(
                 id=row[0] or "",
-                name=row[1] or "",
-                english_prompt=row[2] or "",
-                location_lock=row[3] or "" if len(row) > 3 else "",
-                lighting_default=row[4] or "" if len(row) > 4 else "",
-                image_file=row[5] or "" if len(row) > 5 else "",
+                name=row[2] or "",  # name ở cột 3
+                english_prompt=row[3] or "",  # english_prompt ở cột 4
+                location_lock=row[4] or "" if len(row) > 4 else "",  # character_lock
+                lighting_default=row[5] or "" if len(row) > 5 else "",  # vietnamese_prompt
+                image_file=row[6] or "" if len(row) > 6 else "",  # image_file
             )
             locations.append(loc)
 

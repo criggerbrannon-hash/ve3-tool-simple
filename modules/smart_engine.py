@@ -4827,11 +4827,13 @@ if (btn) {
                             video_prompt = scene.video_prompt or video_prompt
                             break
 
-                    # Tạo video bằng T2V mode (Chrome ở "Từ văn bản sang video")
-                    # Interceptor convert T2V request → I2V API với media_id
-                    ok, result_path, error = drission_api.generate_video_t2v_mode(
+                    # Tạo video bằng CUSTOM I2V mode
+                    # Python chuẩn bị payload I2V, Chrome chỉ cung cấp fresh reCAPTCHA
+                    ok, result_path, error = drission_api.generate_video_custom_i2v(
                         media_id=media_id,
                         prompt=video_prompt,
+                        aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+                        video_model="veo_3_1_r2v_fast_landscape_ultra_relaxed",
                         save_path=mp4_path
                     )
 
@@ -4851,6 +4853,13 @@ if (btn) {
                     else:
                         processed_scenes.add(scene_id)  # Đánh dấu đã xử lý (tránh retry liên tục)
                         self.log(f"[PARALLEL-VIDEO] ✗ Video FAILED: {scene_id} - {error}", "WARN")
+
+                        # Nếu Chrome đã bị clear/đóng, dừng loop hoàn toàn
+                        error_lower = str(error).lower() if error else ""
+                        if "login lại" in error_lower or "clear" in error_lower or "đã đóng" in error_lower or "khởi động" in error_lower:
+                            self.log("[PARALLEL-VIDEO] ⚠️ Chrome cần login lại - DỪNG video loop!", "ERROR")
+                            self._parallel_video_running = False
+                            break
 
             except Exception as e:
                 self.log(f"[PARALLEL-VIDEO] Error: {e}", "WARN")

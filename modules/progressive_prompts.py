@@ -330,16 +330,40 @@ For each character, provide:
 1. portrait_prompt: Full description for generating a reference portrait (white background, portrait style)
 2. character_lock: Short 10-15 word description to use in scene prompts (for consistency)
 
+CRITICAL - ID FORMAT (DO NOT USE CHARACTER NAMES AS IDs):
+- First/main character: id = "nvc" (narrator/protagonist)
+- Second character: id = "nv1"
+- Third character: id = "nv2"
+- Fourth character: id = "nv3"
+- And so on... (nv4, nv5, nv6...)
+- Store the actual character name in the "name" field, NOT in id
+
 Return JSON only:
 {{
     "characters": [
         {{
-            "id": "char_id",
-            "name": "Character Name",
-            "role": "protagonist/antagonist/supporting/narrator",
-            "portrait_prompt": "detailed portrait description for image generation, white background",
-            "character_lock": "short description for scene prompts (10-15 words)",
-            "vietnamese_description": "Mô tả tiếng Việt"
+            "id": "nvc",
+            "name": "Janelle",
+            "role": "narrator",
+            "portrait_prompt": "35-year-old African American woman, warm brown eyes, natural curly hair...",
+            "character_lock": "35-year-old black woman with curly hair and warm smile",
+            "vietnamese_description": "Phụ nữ da màu 35 tuổi"
+        }},
+        {{
+            "id": "nv1",
+            "name": "Tommy",
+            "role": "supporting",
+            "portrait_prompt": "8-year-old boy with bright curious eyes...",
+            "character_lock": "young boy with curious expression",
+            "vietnamese_description": "Cậu bé 8 tuổi"
+        }},
+        {{
+            "id": "nv2",
+            "name": "Karen",
+            "role": "antagonist",
+            "portrait_prompt": "...",
+            "character_lock": "...",
+            "vietnamese_description": "..."
         }}
     ]
 }}
@@ -447,15 +471,26 @@ For each location, provide:
 1. location_prompt: Full description for generating a reference image
 2. location_lock: Short description to use in scene prompts
 
+IMPORTANT: Location IDs MUST follow this format:
+- "loc_narrator" for the narrator's storytelling location
+- "loc_01", "loc_02", "loc_03"... for other locations (numbered with 2 digits)
+
 Return JSON only:
 {{
     "locations": [
         {{
-            "id": "loc_id",
-            "name": "Location Name",
-            "location_prompt": "detailed location description for image generation",
-            "location_lock": "short description for scene prompts (10-15 words)",
-            "lighting_default": "default lighting for this location"
+            "id": "loc_narrator",
+            "name": "Storytelling Room",
+            "location_prompt": "cozy living room with warm lighting...",
+            "location_lock": "warm living room, soft lamp light",
+            "lighting_default": "warm evening light"
+        }},
+        {{
+            "id": "loc_01",
+            "name": "Main Location",
+            "location_prompt": "detailed location description...",
+            "location_lock": "short description for scene prompts",
+            "lighting_default": "natural daylight"
         }}
     ]
 }}
@@ -473,22 +508,25 @@ Return JSON only:
             self._log("  ERROR: Could not parse locations!", "ERROR")
             return StepResult("create_locations", StepStatus.FAILED, "JSON parse failed")
 
-        # Save to Excel
+        # Save to Excel - LƯU VÀO CHARACTERS SHEET (không phải locations)
+        # Vì smart_engine chỉ đọc characters sheet để tạo ảnh reference
         try:
             for loc_data in data["locations"]:
                 loc_id = loc_data.get("id", "")
-                loc = Location(
+                # Tạo Character object với role="location" → vào characters sheet
+                char = Character(
                     id=loc_id,
                     name=loc_data.get("name", ""),
+                    role="location",  # Đánh dấu là location
                     english_prompt=loc_data.get("location_prompt", ""),
-                    location_lock=loc_data.get("location_lock", ""),
-                    lighting_default=loc_data.get("lighting_default", ""),
-                    image_file=f"{loc_id}.png",  # Gán image_file = {id}.png
+                    character_lock=loc_data.get("location_lock", ""),
+                    vietnamese_prompt=loc_data.get("lighting_default", ""),
+                    image_file=f"{loc_id}.png",
                 )
-                workbook.add_location(loc)
+                workbook.add_character(char)
 
             workbook.save()
-            self._log(f"  -> Saved {len(data['locations'])} locations to Excel")
+            self._log(f"  -> Saved {len(data['locations'])} locations to characters sheet")
             for loc in data["locations"][:3]:
                 self._log(f"     - {loc.get('name', 'N/A')}")
 
@@ -576,6 +614,7 @@ Rules:
 2. Group SRT entries that belong to the same visual moment
 3. Assign appropriate characters and locations to each scene
 4. Create a visual_moment description (what the viewer sees)
+5. IMPORTANT: Use exact character IDs from above (nvc, nv1, nv2...) and location IDs (loc_narrator, loc_01, loc_02...)
 
 Return JSON only:
 {{
@@ -588,8 +627,8 @@ Return JSON only:
             "duration": 5.0,
             "srt_text": "combined text from SRT entries",
             "visual_moment": "what the viewer sees in this scene",
-            "characters_used": "char_id1, char_id2",
-            "location_used": "loc_id",
+            "characters_used": "nvc, nv1",
+            "location_used": "loc_01",
             "camera": "shot type and movement",
             "lighting": "lighting description"
         }}
