@@ -451,21 +451,26 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                             "mediaId": t2vConfig.mediaId
                         }];
 
-                        // 4. Đổi model từ T2V sang I2V
-                        // T2V: veo_3_1_t2v_fast, veo_3_1_t2v_fast_ultra
-                        // I2V ĐÚNG: veo_3_0_r2v_fast_ultra (KHÔNG có _landscape_)
-                        var currentModel = req.videoModelKey || 'veo_3_1_t2v_fast';
+                        // XÓA seed - I2V không dùng seed
+                        delete req.seed;
 
-                        // Fix model name:
-                        // 1. Loại bỏ _landscape_ (Chrome thêm vào nhưng API không nhận)
-                        // 2. Đổi veo_3_1 → veo_3_0 (I2V chỉ hỗ trợ 3.0)
-                        // 3. Đổi t2v → r2v nếu cần
+                        // 4. Đổi model từ T2V sang I2V
+                        // T2V: veo_3_1_t2v_fast_ultra_relaxed, veo_3_1_t2v_fast_ultra
+                        // I2V ĐÚNG: veo_3_0_r2v_fast_ultra
+                        var currentModel = req.videoModelKey || 'veo_3_1_t2v_fast';
+                        console.log('[T2V→I2V] Original model from Chrome:', currentModel);
+
+                        // Fix model name - QUAN TRỌNG: thứ tự replace matters!
+                        // 1. Xóa _relaxed (Chrome thêm vào cho Lower Priority)
+                        // 2. Xóa _landscape_ và _portrait_
+                        // 3. Đổi t2v → r2v
+                        // 4. Đổi veo_3_1 → veo_3_0
                         var newModel = currentModel
+                            .replace('_relaxed', '')           // Xóa _relaxed
                             .replace('_landscape_', '_')       // Xóa _landscape_
                             .replace('_portrait_', '_')        // Xóa _portrait_
-                            .replace('veo_3_1_t2v', 'veo_3_0_r2v')  // T2V 3.1 → I2V 3.0
-                            .replace('veo_3_1_r2v', 'veo_3_0_r2v')  // I2V 3.1 → I2V 3.0
-                            .replace('veo_3_0_t2v', 'veo_3_0_r2v'); // T2V 3.0 → I2V 3.0
+                            .replace('_t2v_', '_r2v_')         // t2v → r2v (giữa 2 dấu _)
+                            .replace('veo_3_1_', 'veo_3_0_');  // 3.1 → 3.0
 
                         // Override nếu config có chỉ định model cụ thể
                         if (t2vConfig.videoModelKey) {
@@ -473,8 +478,9 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                         }
 
                         req.videoModelKey = newModel;
-                        console.log('[T2V→I2V] Model:', currentModel, '→', newModel);
+                        console.log('[T2V→I2V] Model converted:', currentModel, '→', newModel);
                         console.log('[T2V→I2V] MediaId:', t2vConfig.mediaId.substring(0, 50) + '...');
+                        console.log('[T2V→I2V] Final request:', JSON.stringify(req, null, 2));
                     }
 
                     // Update body với payload đã convert
