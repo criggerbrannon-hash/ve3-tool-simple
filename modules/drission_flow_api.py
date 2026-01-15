@@ -1650,6 +1650,109 @@ class DrissionFlowAPI:
             self.log(f"✗ Clear Chrome data failed: {e}", "ERROR")
             return False
 
+    def reset_chrome_profile(self) -> bool:
+        """
+        Xóa TRIỆT ĐỂ Chrome profile - Chrome sẽ trắng như mới.
+        Cách này tốt hơn clear_chrome_data() vì xóa hoàn toàn thư mục profile.
+
+        Flow:
+        1. Đóng Chrome và driver
+        2. Xóa toàn bộ thư mục profile
+        3. Đánh dấu cần login lại
+
+        Returns:
+            True nếu xóa thành công
+        """
+        import shutil
+
+        self.log("🗑️ RESET Chrome Profile (xóa triệt để)...")
+
+        try:
+            # 1. Đóng Chrome trước
+            self._kill_chrome()
+            self.close()
+            time.sleep(2)
+
+            # 2. Xóa thư mục profile
+            if self.profile_dir and self.profile_dir.exists():
+                self.log(f"  Deleting: {self.profile_dir}")
+                try:
+                    shutil.rmtree(str(self.profile_dir))
+                    self.log(f"  ✓ Deleted profile directory")
+                except Exception as e:
+                    self.log(f"  ⚠️ Could not delete profile: {e}", "WARN")
+                    # Thử xóa từng file quan trọng
+                    important_dirs = ['Default', 'Profile 1', 'Cookies', 'Cache', 'Code Cache']
+                    for subdir in important_dirs:
+                        subpath = self.profile_dir / subdir
+                        if subpath.exists():
+                            try:
+                                shutil.rmtree(str(subpath))
+                                self.log(f"    ✓ Deleted {subdir}")
+                            except:
+                                pass
+
+            # 3. Reset tất cả flags
+            self._ready = False
+            self._t2v_mode_selected = False
+            self._consecutive_403 = 0
+            self._cleared_data_for_403 = False
+            self.driver = None
+
+            self.log("✓ Chrome profile RESET thành công!")
+            self.log("⚠️ Cần khởi động lại Chrome và login Google!")
+            return True
+
+        except Exception as e:
+            self.log(f"✗ Reset Chrome profile failed: {e}", "ERROR")
+            return False
+
+    def full_reset_and_login(self, project_url: str = None) -> bool:
+        """
+        Reset Chrome triệt để và tự động login lại.
+        Dùng khi gặp 403 liên tục không giải quyết được.
+
+        Flow:
+        1. reset_chrome_profile() - xóa sạch profile
+        2. Khởi động Chrome mới
+        3. Auto login Google (nếu có chrome_portable)
+        4. Navigate đến project
+
+        Returns:
+            True nếu reset và login thành công
+        """
+        self.log("🔄 FULL RESET: Xóa profile + Login lại...")
+
+        # 1. Reset profile
+        if not self.reset_chrome_profile():
+            self.log("✗ Không reset được profile", "ERROR")
+            return False
+
+        time.sleep(2)
+
+        # 2. Khởi động Chrome mới và setup
+        try:
+            # Nếu có chrome_portable, sẽ tự động copy cookies
+            if hasattr(self, '_chrome_portable') and self._chrome_portable:
+                self.log("  → Sẽ copy cookies từ Chrome portable")
+
+            # Setup lại
+            if project_url:
+                success = self.setup(project_url=project_url, skip_mode_selection=True)
+            else:
+                success = self.setup(skip_mode_selection=True)
+
+            if success:
+                self.log("✓ FULL RESET thành công!")
+                return True
+            else:
+                self.log("✗ Setup sau reset thất bại", "ERROR")
+                return False
+
+        except Exception as e:
+            self.log(f"✗ Full reset failed: {e}", "ERROR")
+            return False
+
     def setup(
         self,
         wait_for_project: bool = True,
@@ -3178,12 +3281,12 @@ class DrissionFlowAPI:
                         time.sleep(2)
 
                     elif self._consecutive_403 >= 3 and not cleared_flag:
-                        # Bước 2: Lần 3 → Xóa dữ liệu + đăng nhập lại NGAY
-                        self.log(f"⚠️ 403 lần {self._consecutive_403} → XÓA DỮ LIỆU + ĐĂNG NHẬP LẠI!", "WARN")
-                        # QUAN TRỌNG: Clear data TRƯỚC khi đóng Chrome (vì cần driver để navigate)
-                        self.clear_chrome_data()
+                        # Bước 2: Lần 3 → XÓA TRIỆT ĐỂ PROFILE + đăng nhập lại
+                        self.log(f"⚠️ 403 lần {self._consecutive_403} → RESET PROFILE + ĐĂNG NHẬP LẠI!", "WARN")
+                        # Dùng reset_chrome_profile() - xóa hoàn toàn thư mục profile
+                        self.reset_chrome_profile()
                         time.sleep(1)
-                        # Login lại (sẽ tự đóng Chrome cũ và login)
+                        # Login lại (sẽ tự khởi động Chrome mới)
                         self._auto_login_google()
                         self._cleared_data_for_403 = True
                         self._consecutive_403 = 0  # Reset counter sau khi clear
@@ -4587,11 +4690,12 @@ class DrissionFlowAPI:
                         time.sleep(2)
 
                     elif self._consecutive_403 == 4 or (self._consecutive_403 > 3 and not cleared_flag):
-                        # Bước 2: Sau 3 lần reset vẫn 403 → Xóa dữ liệu + đăng nhập lại
-                        self.log(f"[T2V→I2V] ⚠️ 403 sau 3 lần reset → XÓA DỮ LIỆU + ĐĂNG NHẬP LẠI!", "WARN")
-                        self.clear_chrome_data()
+                        # Bước 2: Sau 3 lần reset vẫn 403 → XÓA TRIỆT ĐỂ PROFILE + đăng nhập lại
+                        self.log(f"[T2V→I2V] ⚠️ 403 sau 3 lần reset → RESET PROFILE + ĐĂNG NHẬP LẠI!", "WARN")
+                        # Dùng reset_chrome_profile() - xóa hoàn toàn thư mục profile
+                        self.reset_chrome_profile()
                         time.sleep(1)
-                        # Login lại (sẽ tự đóng Chrome cũ và login)
+                        # Login lại (sẽ tự khởi động Chrome mới)
                         self._auto_login_google()
                         self._cleared_data_for_403 = True
                         self._consecutive_403 = 0
