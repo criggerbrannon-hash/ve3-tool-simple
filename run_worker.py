@@ -720,37 +720,58 @@ def scan_master_projects() -> list:
         print(f"  ⚠️ Master PROJECTS not accessible: {MASTER_PROJECTS}")
         return pending
 
-    # List all folders
-    all_folders = [item for item in safe_iterdir(MASTER_PROJECTS) if item.is_dir()]
-    print(f"  [DEBUG] Found {len(all_folders)} folders in MASTER_PROJECTS")
+    # List all folders - wrap in try-except for network safety
+    try:
+        all_folders = []
+        for item in safe_iterdir(MASTER_PROJECTS):
+            try:
+                if item.is_dir():
+                    all_folders.append(item)
+            except (OSError, PermissionError):
+                continue
+        print(f"  [DEBUG] Found {len(all_folders)} folders in MASTER_PROJECTS")
+    except (OSError, PermissionError) as e:
+        print(f"  ⚠️ Network error listing master: {e}")
+        return pending
 
     for item in all_folders:
-        code = item.name
+        try:
+            code = item.name
 
-        # Skip if not matching this worker's channel
-        if not matches_channel(code):
-            continue  # Silent skip - not our channel
+            # Skip if not matching this worker's channel
+            if not matches_channel(code):
+                continue  # Silent skip - not our channel
 
-        # Skip if already in VISUAL
-        if is_project_complete_on_master(code):
-            print(f"    - {code}: already in VISUAL ✓")
-            continue
+            # Skip if already in VISUAL
+            if is_project_complete_on_master(code):
+                print(f"    - {code}: already in VISUAL ✓")
+                continue
 
-        # Check if has Excel or SRT
-        excel_path = item / f"{code}_prompts.xlsx"
-        srt_path = item / f"{code}.srt"
+            # Check if has Excel or SRT
+            excel_path = item / f"{code}_prompts.xlsx"
+            srt_path = item / f"{code}.srt"
 
-        if has_excel_with_prompts(item, code):
-            print(f"    - {code}: ready (has prompts) ✓")
-            pending.append(code)
-        elif srt_path.exists():
-            # Có SRT nhưng không có Excel - worker sẽ tự tạo
-            print(f"    - {code}: has SRT, no Excel → will create with API")
-            pending.append(code)
-        elif excel_path.exists():
-            print(f"    - {code}: Excel exists but no prompts yet")
-        else:
-            print(f"    - {code}: no Excel and no SRT")
+            # Wrap network path checks in try-except
+            try:
+                if has_excel_with_prompts(item, code):
+                    print(f"    - {code}: ready (has prompts) ✓")
+                    pending.append(code)
+                elif srt_path.exists():
+                    # Có SRT nhưng không có Excel - worker sẽ tự tạo
+                    print(f"    - {code}: has SRT, no Excel → will create with API")
+                    pending.append(code)
+                elif excel_path.exists():
+                    print(f"    - {code}: Excel exists but no prompts yet")
+                else:
+                    print(f"    - {code}: no Excel and no SRT")
+            except (OSError, PermissionError) as e:
+                print(f"  ⚠️ Network error checking {code}: {e}")
+                continue
+
+        except (OSError, PermissionError) as e:
+            # Network disconnected while iterating
+            print(f"  ⚠️ Network error scanning: {e}")
+            break
 
     return sorted(pending)
 
