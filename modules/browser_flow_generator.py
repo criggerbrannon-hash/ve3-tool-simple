@@ -3673,6 +3673,22 @@ class BrowserFlowGenerator:
             # Xác định là ảnh tham chiếu (nv*/loc*) hay ảnh scene
             is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
 
+            # === PARALLEL MODE: Reload media_ids từ Excel trước mỗi scene ===
+            # Chrome 2 cần lấy media_ids mới từ Chrome 1 (đang chạy song song)
+            if not is_reference_image and total_workers > 1:
+                try:
+                    if workbook:
+                        fresh_media_ids = workbook.get_media_ids()
+                        if fresh_media_ids:
+                            # Chỉ log nếu có media_ids mới
+                            new_ids = set(fresh_media_ids.keys()) - set(excel_media_ids.keys())
+                            if new_ids:
+                                self._log(f"   [PARALLEL] Reload Excel: +{len(new_ids)} media_ids mới: {list(new_ids)}")
+                            excel_media_ids = fresh_media_ids
+                            all_media_ids = {**cached_media_names, **excel_media_ids}
+                except Exception as e:
+                    self._log(f"   [PARALLEL] Lỗi reload media_ids: {e}", "warn")
+
             # Xác định thư mục lưu: nv*/loc* -> nv_path (tham chiếu), còn lại -> img_path
             if is_reference_image:
                 save_dir = self.nv_path

@@ -172,7 +172,7 @@ def get_account_info(machine_code: str) -> dict:
         return None
 
 
-def login_google_chrome(account_info: dict, chrome_portable: str = None) -> bool:
+def login_google_chrome(account_info: dict, chrome_portable: str = None, profile_dir: str = None, worker_id: int = 0) -> bool:
     """
     Mở Chrome và đăng nhập Google bằng JavaScript.
 
@@ -185,6 +185,9 @@ def login_google_chrome(account_info: dict, chrome_portable: str = None) -> bool
         account_info: Dict với 'id' (email) và 'password'
         chrome_portable: Đường dẫn Chrome Portable cụ thể (nếu có).
                         Quan trọng khi có nhiều Chrome chạy song song.
+        profile_dir: Đường dẫn profile Chrome cụ thể (nếu có).
+                    Dùng cho Chrome 2 với profile riêng (ví dụ: pic2).
+        worker_id: Worker ID để dùng port khác nhau cho mỗi Chrome.
     """
     try:
         from DrissionPage import ChromiumPage, ChromiumOptions
@@ -200,6 +203,13 @@ def login_google_chrome(account_info: dict, chrome_portable: str = None) -> bool
     try:
         # Setup Chrome options
         options = ChromiumOptions()
+
+        # === Port riêng cho mỗi Chrome (tránh conflict) ===
+        # Chrome 1 (worker_id=0): port 9222
+        # Chrome 2 (worker_id=1): port 9223
+        base_port = 9222 + worker_id
+        options.set_local_port(base_port)
+        log(f"Using port: {base_port} (worker_id={worker_id})")
 
         # Ưu tiên chrome_portable được truyền vào (cho Chrome 2 song song)
         chrome_exe = None
@@ -221,14 +231,21 @@ def login_google_chrome(account_info: dict, chrome_portable: str = None) -> bool
             options.set_browser_path(chrome_exe)
             log(f"Using Chrome: {chrome_exe}")
 
-            # User data
-            chrome_dir = Path(chrome_exe).parent
-            for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
-                if data_path.exists():
-                    options.set_user_data_path(str(data_path))
-                    break
+            # === Profile: ưu tiên profile_dir được truyền vào ===
+            if profile_dir and Path(profile_dir).exists():
+                options.set_user_data_path(str(profile_dir))
+                log(f"Using profile: {profile_dir}")
+            else:
+                # Fallback: dùng profile mặc định của Chrome Portable
+                chrome_dir = Path(chrome_exe).parent
+                for data_path in [chrome_dir / "Data" / "profile", chrome_dir / "User Data"]:
+                    if data_path.exists():
+                        options.set_user_data_path(str(data_path))
+                        log(f"Using default profile: {data_path}")
+                        break
 
-        # Mở Chrome
+        # Mở Chrome mới (không kết nối vào Chrome đang chạy)
+        options.auto_port(False)  # Không tự động tìm port
         driver = ChromiumPage(options)
 
         # Đi đến trang đăng nhập Google

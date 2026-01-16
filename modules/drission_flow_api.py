@@ -1428,12 +1428,19 @@ class DrissionFlowAPI:
             self.close()
             time.sleep(2)
 
-            # 4. Chạy login - QUAN TRỌNG: Truyền chrome_portable để login đúng Chrome
+            # 4. Chạy login - QUAN TRỌNG: Truyền chrome_portable, profile_dir và worker_id
             # Khi có 2 Chrome song song (Chrome 1 tạo ảnh, Chrome 2 tạo video),
             # cần login đúng Chrome bị logout, không phải Chrome kia
             self.log("Bắt đầu đăng nhập Google...")
             self.log(f"  Chrome: {self._chrome_portable or 'default'}")
-            success = login_google_chrome(account_info, chrome_portable=self._chrome_portable)
+            self.log(f"  Profile: {self.profile_dir}")
+            self.log(f"  Worker ID: {self.worker_id}")
+            success = login_google_chrome(
+                account_info,
+                chrome_portable=self._chrome_portable,
+                profile_dir=str(self.profile_dir) if self.profile_dir else None,
+                worker_id=self.worker_id
+            )
 
             if success:
                 self.log("✓ Đăng nhập thành công!")
