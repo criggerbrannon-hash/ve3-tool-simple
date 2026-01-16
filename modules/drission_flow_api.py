@@ -1894,17 +1894,17 @@ class DrissionFlowAPI:
 
                 self.log(f"  ✓ Đã xóa {deleted_count} critical items")
 
-                # 4. Xóa toàn bộ thư mục Default nếu còn tồn tại
-                default_profile = data_dir / "profile" / "Default"
-                if default_profile.exists():
-                    self.log(f"  🗑️ Xóa toàn bộ Default profile...")
-                    if self._delete_with_retry(default_profile):
-                        self.log(f"  ✓ Deleted Default profile")
+                # 4. XÓA TOÀN BỘ thư mục profile (chứa Default, cache, local storage...)
+                profile_folder = data_dir / "profile"
+                if profile_folder.exists():
+                    self.log(f"  🔥 XÓA TOÀN BỘ profile folder: {profile_folder}")
+                    if self._delete_with_retry(profile_folder):
+                        self.log(f"  ✓ Deleted entire profile folder!")
                         deleted = True
                     else:
-                        # Fallback: xóa từng file quan trọng
-                        self.log(f"  ⚠️ Không xóa được folder, thử xóa từng file...")
-                        for f in default_profile.glob('*'):
+                        # Fallback: xóa từng subfolder
+                        self.log(f"  ⚠️ Không xóa được folder, thử xóa từng thư mục con...")
+                        for f in profile_folder.glob('*'):
                             try:
                                 if f.is_file():
                                     f.unlink()
@@ -1914,7 +1914,7 @@ class DrissionFlowAPI:
                                 pass
                         deleted = True
 
-                # 5. Backup: Nếu chưa xóa được, thử xóa cả Data folder
+                # 5. Backup: Nếu chưa xóa được profile, thử xóa cả Data folder
                 if not deleted:
                     self.log(f"  🔥 Xóa TOÀN BỘ Data folder...")
                     if self._delete_with_retry(data_dir):
@@ -2127,6 +2127,8 @@ class DrissionFlowAPI:
                             if data_path.exists():
                                 user_data = data_path
                                 break
+                        # LƯU LẠI để reset_chrome_profile() có thể tìm đúng Data folder
+                        self._chrome_portable = chrome_exe
                         self.log(f"[AUTO] Phat hien Chrome: {chrome_exe}")
                         break
 
