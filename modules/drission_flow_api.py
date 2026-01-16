@@ -1205,26 +1205,58 @@ class DrissionFlowAPI:
         # 1. Đợi trang load và tìm button "Dự án mới"
         # Nếu không tìm thấy → F5 refresh và thử lại (mỗi 10s)
         MAX_REFRESH = 6  # Tối đa 6 lần refresh (60s)
+        clicked_success = False
         for refresh_count in range(MAX_REFRESH):
             # Thử tìm button trong 10s
             for i in range(10):
+                # Check URL trước - có thể đã vào project rồi
+                try:
+                    current_url = self.driver.url
+                    if "/project/" in current_url:
+                        self.log("✓ Đã vào project (URL check)")
+                        return True
+                except:
+                    pass
+
                 try:
                     result = self.driver.run_js(JS_CLICK_NEW_PROJECT)
                     if result == 'CLICKED':
                         self.log("✓ Clicked 'Dự án mới'")
+                        clicked_success = True
                         time.sleep(2)
+                        # Check URL ngay sau click
+                        try:
+                            if "/project/" in self.driver.url:
+                                self.log("✓ Đã vào project!")
+                                return True
+                        except:
+                            pass
                         break
                 except Exception as e:
                     if "ContextLost" in str(type(e).__name__) or "refresh" in str(e).lower():
                         self.log(f"   Page đang refresh, đợi...")
                         time.sleep(2)
+                        # Page refresh có thể là do đang navigate vào project
+                        try:
+                            if "/project/" in self.driver.url:
+                                self.log("✓ Đã vào project (sau refresh)!")
+                                return True
+                        except:
+                            pass
                         continue
                     raise
                 time.sleep(1)
                 if i == 4:
                     self.log("  ... đợi button 'Dự án mới' xuất hiện...")
             else:
-                # Không tìm thấy button → F5 refresh
+                # Không tìm thấy button → check URL trước khi F5
+                try:
+                    if "/project/" in self.driver.url:
+                        self.log("✓ Đã vào project!")
+                        return True
+                except:
+                    pass
+                # F5 refresh
                 self.log(f"⚠️ Không tìm thấy button - F5 refresh (lần {refresh_count + 1}/{MAX_REFRESH})...")
                 try:
                     self.driver.refresh()
@@ -1234,8 +1266,18 @@ class DrissionFlowAPI:
                 except Exception as e:
                     self.log(f"  → F5 error: {e}", "WARN")
                 continue
-            break  # Đã click thành công
+
+            # Đã click thành công, check URL một lần nữa
+            if clicked_success:
+                break
         else:
+            # Check URL lần cuối
+            try:
+                if "/project/" in self.driver.url:
+                    self.log("✓ Đã vào project!")
+                    return True
+            except:
+                pass
             self.log(f"✗ Không tìm thấy button 'Dự án mới' sau {MAX_REFRESH} lần refresh", "ERROR")
             return False
 
