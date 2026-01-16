@@ -214,7 +214,11 @@ class SmartEngine:
             self.callback(full_msg)
         else:
             # Fallback to print only when no GUI callback
-            print(full_msg)
+            # Handle encoding issues on Windows console
+            try:
+                print(full_msg)
+            except UnicodeEncodeError:
+                print(full_msg.encode('ascii', 'replace').decode('ascii'))
 
     def load_config(self):
         """Load config."""
