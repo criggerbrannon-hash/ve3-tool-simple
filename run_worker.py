@@ -407,14 +407,22 @@ def copy_from_master(code: str) -> Path:
     # If local already exists, use it (even if master was deleted)
     if dst.exists():
         print(f"  📂 Using existing local: {code}")
-        # Try to update Excel from master if available
+        # Try to update Excel and SRT from master if available
         if src.exists():
+            # Copy Excel if newer
             excel_src = src / f"{code}_prompts.xlsx"
             excel_dst = dst / f"{code}_prompts.xlsx"
             if excel_src.exists():
                 if not excel_dst.exists() or excel_src.stat().st_mtime > excel_dst.stat().st_mtime:
                     shutil.copy2(excel_src, excel_dst)
                     print(f"  📥 Updated Excel from master")
+
+            # Copy SRT if local doesn't have it
+            srt_src = src / f"{code}.srt"
+            srt_dst = dst / f"{code}.srt"
+            if srt_src.exists() and not srt_dst.exists():
+                shutil.copy2(srt_src, srt_dst)
+                print(f"  📥 Copied SRT from master")
         return dst
 
     # Local doesn't exist, need to copy from master
@@ -672,6 +680,35 @@ def scan_incomplete_local_projects() -> list:
     return sorted(need_processing)
 
 
+def safe_path_exists(path: Path) -> bool:
+    """
+    Safely check if a path exists, handling network disconnection errors.
+    Returns False if path doesn't exist OR if network is disconnected.
+    """
+    try:
+        return path.exists()
+    except (OSError, PermissionError) as e:
+        # WinError 1167: The device is not connected
+        # WinError 53: The network path was not found
+        # WinError 64: The specified network name is no longer available
+        print(f"  ⚠️ Network error checking path: {e}")
+        return False
+
+
+def safe_iterdir(path: Path) -> list:
+    """
+    Safely iterate over a directory, handling network disconnection errors.
+    Returns empty list if path doesn't exist OR if network is disconnected.
+    """
+    try:
+        if not path.exists():
+            return []
+        return list(path.iterdir())
+    except (OSError, PermissionError) as e:
+        print(f"  ⚠️ Network error listing directory: {e}")
+        return []
+
+
 def scan_master_projects() -> list:
     """Scan master PROJECTS folder for pending projects."""
     pending = []
@@ -679,41 +716,62 @@ def scan_master_projects() -> list:
     print(f"  [DEBUG] Checking: {MASTER_PROJECTS}")
     print(f"  [DEBUG] Worker channel: {WORKER_CHANNEL or 'ALL (no filter)'}")
 
-    if not MASTER_PROJECTS.exists():
+    if not safe_path_exists(MASTER_PROJECTS):
         print(f"  ⚠️ Master PROJECTS not accessible: {MASTER_PROJECTS}")
         return pending
 
-    # List all folders
-    all_folders = [item for item in MASTER_PROJECTS.iterdir() if item.is_dir()]
-    print(f"  [DEBUG] Found {len(all_folders)} folders in MASTER_PROJECTS")
+    # List all folders - wrap in try-except for network safety
+    try:
+        all_folders = []
+        for item in safe_iterdir(MASTER_PROJECTS):
+            try:
+                if item.is_dir():
+                    all_folders.append(item)
+            except (OSError, PermissionError):
+                continue
+        print(f"  [DEBUG] Found {len(all_folders)} folders in MASTER_PROJECTS")
+    except (OSError, PermissionError) as e:
+        print(f"  ⚠️ Network error listing master: {e}")
+        return pending
 
     for item in all_folders:
-        code = item.name
+        try:
+            code = item.name
 
-        # Skip if not matching this worker's channel
-        if not matches_channel(code):
-            continue  # Silent skip - not our channel
+            # Skip if not matching this worker's channel
+            if not matches_channel(code):
+                continue  # Silent skip - not our channel
 
-        # Skip if already in VISUAL
-        if is_project_complete_on_master(code):
-            print(f"    - {code}: already in VISUAL ✓")
-            continue
+            # Skip if already in VISUAL
+            if is_project_complete_on_master(code):
+                print(f"    - {code}: already in VISUAL ✓")
+                continue
 
-        # Check if has Excel or SRT
-        excel_path = item / f"{code}_prompts.xlsx"
-        srt_path = item / f"{code}.srt"
+            # Check if has Excel or SRT
+            excel_path = item / f"{code}_prompts.xlsx"
+            srt_path = item / f"{code}.srt"
 
-        if has_excel_with_prompts(item, code):
-            print(f"    - {code}: ready (has prompts) ✓")
-            pending.append(code)
-        elif srt_path.exists():
-            # Có SRT nhưng không có Excel - worker sẽ tự tạo
-            print(f"    - {code}: has SRT, no Excel → will create with API")
-            pending.append(code)
-        elif excel_path.exists():
-            print(f"    - {code}: Excel exists but no prompts yet")
-        else:
-            print(f"    - {code}: no Excel and no SRT")
+            # Wrap network path checks in try-except
+            try:
+                if has_excel_with_prompts(item, code):
+                    print(f"    - {code}: ready (has prompts) ✓")
+                    pending.append(code)
+                elif srt_path.exists():
+                    # Có SRT nhưng không có Excel - worker sẽ tự tạo
+                    print(f"    - {code}: has SRT, no Excel → will create with API")
+                    pending.append(code)
+                elif excel_path.exists():
+                    print(f"    - {code}: Excel exists but no prompts yet")
+                else:
+                    print(f"    - {code}: no Excel and no SRT")
+            except (OSError, PermissionError) as e:
+                print(f"  ⚠️ Network error checking {code}: {e}")
+                continue
+
+        except (OSError, PermissionError) as e:
+            # Network disconnected while iterating
+            print(f"  ⚠️ Network error scanning: {e}")
+            break
 
     return sorted(pending)
 
@@ -813,7 +871,7 @@ def run_scan_loop():
     print(f"{'='*60}")
 
     # Check network paths
-    if not AUTO_PATH or not MASTER_PROJECTS.exists():
+    if not AUTO_PATH or not safe_path_exists(MASTER_PROJECTS):
         print(f"\n❌ Cannot access master PROJECTS!")
         print(f"   Tried paths:")
         for p in POSSIBLE_AUTO_PATHS:

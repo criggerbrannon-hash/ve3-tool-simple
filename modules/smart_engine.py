@@ -1286,10 +1286,7 @@ class SmartEngine:
         Callback duoc goi khi characters prompts da duoc save.
         Bat dau generate character images song song.
         """
-        # Skip character generation nếu flag được set (Chrome 2)
-        if getattr(self, '_skip_references', False):
-            self.log("[STEP 3] Skip character generation (skip_references=True)")
-            return
+        self.log(f"[STEP 3] Characters prompts ready - starting parallel generation...")
         self._generate_characters_async(excel_path, proj_dir)
 
     def _on_total_scenes_known(self, total: int):
@@ -1849,14 +1846,49 @@ class SmartEngine:
                 generator.config['flow_project_id'] = cached_project_id
                 self.log(f"  -> Dùng project_id: {cached_project_id[:8]}... (từ cache)")
 
-            # Goi generate_from_prompts_auto - tu dong chon API hoac Chrome
-            result = generator.generate_from_prompts_auto(
-                prompts=prompts,
-                excel_path=excel_files[0],
-                bearer_token=bearer_token if bearer_token else None
-            )
+            # === TÁCH PROMPTS: REFERENCES TRƯỚC, SCENES SAU ===
+            # Đảm bảo TẤT CẢ ảnh tham chiếu (nv/loc) được tạo TRƯỚC scenes
+            ref_prompts = [p for p in prompts if p['id'].startswith('nv') or p['id'].startswith('loc')]
+            scene_prompts = [p for p in prompts if not (p['id'].startswith('nv') or p['id'].startswith('loc'))]
 
-            if result.get("success") == False:
+            self.log(f"[INFO] Reference images (nv/loc): {[p['id'] for p in ref_prompts]}")
+            self.log(f"[INFO] Scene images: {len(scene_prompts)} scenes")
+
+            total_success = 0
+            total_failed = 0
+
+            # === BƯỚC 1: TẠO TẤT CẢ REFERENCES TRƯỚC ===
+            if ref_prompts:
+                self.log(f"[STEP 1/2] Tạo {len(ref_prompts)} ảnh tham chiếu (nv/loc) TRƯỚC...")
+                ref_result = generator.generate_from_prompts_auto(
+                    prompts=ref_prompts,
+                    excel_path=excel_files[0],
+                    bearer_token=bearer_token if bearer_token else None
+                )
+                total_success += ref_result.get("success", 0)
+                total_failed += ref_result.get("failed", 0)
+                self.log(f"[STEP 1/2] References: {ref_result.get('success', 0)} OK, {ref_result.get('failed', 0)} fail")
+
+                # Đợi chút để đảm bảo ảnh được lưu xong
+                import time
+                time.sleep(2)
+
+            # === BƯỚC 2: TẠO SCENES SAU KHI REFERENCES XONG ===
+            if scene_prompts:
+                self.log(f"[STEP 2/2] Tạo {len(scene_prompts)} scene images...")
+                scene_result = generator.generate_from_prompts_auto(
+                    prompts=scene_prompts,
+                    excel_path=excel_files[0],
+                    bearer_token=bearer_token if bearer_token else None
+                )
+                total_success += scene_result.get("success", 0)
+                total_failed += scene_result.get("failed", 0)
+                self.log(f"[STEP 2/2] Scenes: {scene_result.get('success', 0)} OK, {scene_result.get('failed', 0)} fail")
+
+            # Kết quả tổng hợp
+            result = {"success": total_success, "failed": total_failed}
+
+            if total_success == 0 and total_failed > 0:
                 error_msg = result.get('error', '')
                 self.log(f"API mode error: {error_msg}", "ERROR")
                 if 'Chrome' in error_msg or 'session' in error_msg:
@@ -3991,6 +4023,10 @@ class SmartEngine:
                 if not pid or not prompt:
                     continue
 
+                # === FIX: Convert float to int for numeric IDs ===
+                # Excel often stores numbers as float (1.0, 2.0), need to convert to int first
+                if isinstance(pid, float) and pid == int(pid):
+                    pid = int(pid)
                 pid_str = str(pid).strip()
                 prompt_str = str(prompt).strip()
                 status_str = str(status).lower().strip() if status else ""
@@ -4050,7 +4086,9 @@ class SmartEngine:
 
                 # Xac dinh output folder
                 # Characters (nv*) and Locations (loc*) -> nv/ folder
-                if pid_str.startswith('nv') or pid_str.startswith('loc'):
+                is_reference = pid_str.startswith('nv') or pid_str.startswith('loc')
+
+                if is_reference:
                     out_path = proj_dir / "nv" / f"{pid_str}.png"
                 else:
                     out_path = proj_dir / "img" / f"{pid_str}.png"

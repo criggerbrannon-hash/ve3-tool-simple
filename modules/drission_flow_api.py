@@ -2248,15 +2248,21 @@ class DrissionFlowAPI:
                 self._is_rotating_mode = False
                 self.log("⚠️ Không có proxy - chạy direct connection", "WARN")
 
-            # Tắt Chrome đang dùng profile này trước (tránh conflict)
+            # Tắt Chrome đang dùng CÙNG profile này trước (tránh conflict)
+            # CHÚ Ý: Chỉ kill Chrome dùng profile này, KHÔNG kill Chrome khác
             self._kill_chrome_using_profile()
 
-            # Clean up profile lock trước khi start (tránh conflict)
+            # === XÓA TẤT CẢ LOCK FILES ===
             try:
-                lock_file = self.profile_dir / "SingletonLock"
-                if lock_file.exists():
-                    lock_file.unlink()
-                    self.log("  Đã xóa SingletonLock cũ")
+                lock_files = ["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"]
+                for lock_name in lock_files:
+                    lock_file = self.profile_dir / lock_name
+                    if lock_file.exists():
+                        try:
+                            lock_file.unlink()
+                            self.log(f"  → Đã xóa {lock_name}")
+                        except:
+                            pass
             except:
                 pass
 
@@ -2270,6 +2276,8 @@ class DrissionFlowAPI:
                 except Exception as chrome_err:
                     self.log(f"Chrome attempt {attempt+1}/{max_retries} failed: {chrome_err}", "WARN")
                     if attempt < max_retries - 1:
+                        # Kill Chrome trên port này trước khi thử lại
+                        self._kill_chrome_on_port(self.chrome_port)
                         # Thử port khác
                         self.chrome_port = random.randint(9222, 9999)
                         options.set_local_port(self.chrome_port)
@@ -2302,6 +2310,12 @@ class DrissionFlowAPI:
                 self.driver.get(target_url)
                 # IPv6 cần thời gian load lâu hơn
                 wait_time = 6 if getattr(self, '_ipv6_activated', False) else 3
+                time.sleep(wait_time)
+
+                # === F5 REFRESH ngay sau khi vào link ===
+                # Trang hay bị lag khi mới vào, refresh để load lại cho ổn định
+                self.log("🔄 Refresh trang (tránh lag)...")
+                self.driver.refresh()
                 time.sleep(wait_time)
 
                 # Kiểm tra xem trang có load được không
@@ -2357,9 +2371,11 @@ class DrissionFlowAPI:
                     self.close()
                     time.sleep(3)
 
-                    # Restart với cùng config
+                    # Restart với cùng config - dùng setup() thay vì _start_chrome()
                     try:
-                        if not self._start_chrome():
+                        saved_project_url = getattr(self, '_current_project_url', None)
+                        skip_mode = getattr(self, '_skip_mode_selection', False)
+                        if not self.setup(project_url=saved_project_url, skip_mode_selection=skip_mode):
                             self.log("  → Không restart được Chrome", "ERROR")
                             continue
                         self.log("  → Chrome restarted, thử lại...")
@@ -2412,8 +2428,10 @@ class DrissionFlowAPI:
                             if not self._is_random_ip_mode:
                                 self.log(f"  → Sticky Session ID: {self._rotating_session_id}")
 
-                            # Restart với mode mới
-                            if self._start_chrome():
+                            # Restart với mode mới - dùng setup() thay vì _start_chrome()
+                            saved_project_url = getattr(self, '_current_project_url', None)
+                            skip_mode = getattr(self, '_skip_mode_selection', False)
+                            if self.setup(project_url=saved_project_url, skip_mode_selection=skip_mode):
                                 # Retry navigation
                                 try:
                                     self.driver.get(target_url)
@@ -5969,6 +5987,120 @@ class DrissionFlowAPI:
         # Reset mode state - cần chọn lại khi mở Chrome mới
         self._t2v_mode_selected = False
         self._image_mode_selected = False
+
+    def _auto_kill_conflicting_chrome(self):
+        """
+        Tự động kill Chrome đang conflict với profile hoặc port.
+        Gọi trước khi start Chrome mới.
+        MẠNH: Kill TẤT CẢ Chrome có remote-debugging-port để tránh conflict.
+        """
+        import subprocess
+        import platform
+
+        killed_any = False
+
+        if platform.system() == 'Windows':
+            try:
+                # === CÁCH 1: Kill TẤT CẢ Chrome có remote-debugging-port (tool Chrome) ===
+                # Chrome của tool luôn có --remote-debugging-port, Chrome user thường không có
+                result = subprocess.run(
+                    ['wmic', 'process', 'where', "name='chrome.exe'", 'get', 'commandline,processid'],
+                    capture_output=True, text=True, timeout=15
+                )
+
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines:
+                        # Kill Chrome có remote-debugging-port (tool Chrome)
+                        # HOẶC Chrome portable/ve3
+                        if any(x in line for x in [
+                            'remote-debugging-port',  # Tool Chrome
+                            'GoogleChromePortable',
+                            've3',
+                            'chrome_profile',
+                            str(self.profile_dir).replace('/', '\\')
+                        ]):
+                            # Lấy PID ở cuối dòng
+                            parts = line.strip().split()
+                            if parts:
+                                pid = parts[-1]
+                                if pid.isdigit():
+                                    subprocess.run(['taskkill', '/F', '/PID', pid],
+                                                 capture_output=True, timeout=5)
+                                    self.log(f"  → Killed Chrome (PID: {pid})")
+                                    killed_any = True
+
+                # === CÁCH 2: Kill Chrome trên port 9222 (backup) ===
+                if self._kill_chrome_on_port(self.chrome_port):
+                    killed_any = True
+
+            except Exception as e:
+                self.log(f"  → Kill Chrome error: {e}", "WARN")
+
+        else:
+            # Linux/Mac
+            try:
+                self._kill_chrome_using_profile()
+                self._kill_chrome_on_port(self.chrome_port)
+            except:
+                pass
+
+        if killed_any:
+            self.log("  → Đợi Chrome tắt hẳn...")
+            time.sleep(3)  # Đợi Chrome tắt hẳn
+
+    def _kill_chrome_on_port(self, port: int) -> bool:
+        """
+        Kill Chrome đang dùng debug port này.
+
+        Args:
+            port: Debug port (e.g., 9222)
+
+        Returns:
+            True nếu đã kill được process
+        """
+        import subprocess
+        import platform
+
+        try:
+            if platform.system() == 'Windows':
+                # Windows: Tìm process dùng port này
+                result = subprocess.run(
+                    ['netstat', '-ano'],
+                    capture_output=True, text=True, timeout=10
+                )
+
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if f':{port}' in line and 'LISTENING' in line:
+                            # Lấy PID ở cuối dòng
+                            parts = line.strip().split()
+                            if parts:
+                                pid = parts[-1]
+                                if pid.isdigit():
+                                    # Force kill vì đây là Chrome zombie
+                                    subprocess.run(
+                                        ['taskkill', '/F', '/PID', pid],
+                                        capture_output=True, timeout=5
+                                    )
+                                    self.log(f"  → Killed Chrome trên port {port} (PID: {pid})")
+                                    return True
+            else:
+                # Linux/Mac
+                result = subprocess.run(
+                    ['lsof', '-t', '-i', f':{port}'],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    pid = result.stdout.strip().split('\n')[0]
+                    if pid.isdigit():
+                        subprocess.run(['kill', '-9', pid], capture_output=True, timeout=5)
+                        self.log(f"  → Killed Chrome trên port {port} (PID: {pid})")
+                        return True
+        except Exception as e:
+            pass
+
+        return False
 
     def _kill_chrome_using_profile(self):
         """Tắt Chrome đang dùng profile này để tránh conflict."""

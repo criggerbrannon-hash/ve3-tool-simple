@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-VE3 Tool - Worker PIC BASIC Mode - CHROME 2
-============================================
-Copy y nguyên từ run_worker_pic_basic.py, chỉ đổi:
-- worker_id=1 (Chrome 2)
-- Dùng chrome_portable_2
-- skip_references=True (Chrome 1 tạo nv/loc)
+VE3 Tool - Worker FULL Mode - CHROME 2
+======================================
+Chi tiết TOÀN BỘ scenes - chất lượng cao nhất.
 
-Chạy SONG SONG với run_worker_pic_basic.py
+Chrome 2 trong FULL mode:
+- Images: Scenes lẻ (1,3,5,...)
+- Videos: Scenes lẻ (1,3,5,...) - SONG SONG với Chrome 1
 
 Usage:
-    python run_worker_pic_basic_chrome2.py                     (quét và xử lý tự động)
-    python run_worker_pic_basic_chrome2.py AR47-0028           (chạy 1 project cụ thể)
+    python _run_chrome2_full.py
 """
 
 import sys
@@ -27,14 +25,11 @@ sys.path.insert(0, str(TOOL_DIR))
 # Import từ run_worker (dùng chung logic)
 from run_worker import (
     detect_auto_path,
-    POSSIBLE_AUTO_PATHS,
     get_channel_from_folder,
     matches_channel,
     is_project_complete_on_master,
     has_excel_with_prompts,
-    needs_api_completion,
     copy_from_master,
-    copy_to_visual,
     delete_local_project,
     SCAN_INTERVAL,
 )
@@ -100,7 +95,7 @@ def get_chrome2_path():
 
 
 def is_local_pic_complete(project_dir: Path, name: str) -> bool:
-    """Check if local project has images created."""
+    """Check if local project has ALL images created."""
     img_dir = project_dir / "img"
     if not img_dir.exists():
         return False
@@ -130,8 +125,68 @@ def is_local_pic_complete(project_dir: Path, name: str) -> bool:
     return len(img_files) > 0
 
 
-def process_project_pic_basic_chrome2(code: str, callback=None) -> bool:
-    """Process a single project - CHROME 2."""
+def wait_for_all_images(project_dir: Path, name: str, timeout: int = 600) -> bool:
+    """Đợi tất cả ảnh hoàn thành. Timeout 10 phút."""
+    start = time.time()
+    while time.time() - start < timeout:
+        if is_local_pic_complete(project_dir, name):
+            return True
+        print(f"    [Chrome2] Đợi ảnh hoàn thành... ({int(time.time() - start)}s)")
+        time.sleep(10)
+    return False
+
+
+def create_videos_for_project_chrome2(project_dir: Path, code: str, chrome2_path: str, callback=None) -> bool:
+    """
+    Tạo video cho Chrome 2 - scenes lẻ (1,3,5,...).
+    """
+    def log(msg, level="INFO"):
+        if callback:
+            callback(msg, level)
+        else:
+            print(f"[Chrome2] {msg}")
+
+    try:
+        from modules.smart_engine import SmartEngine
+
+        excel_path = project_dir / f"{code}_prompts.xlsx"
+        if not excel_path.exists():
+            log(f"  No Excel found for video creation!", "ERROR")
+            return False
+
+        log(f"\n[VIDEO] Creating videos (Chrome 2 = scenes lẻ)...")
+
+        # Chrome 2: worker_id=1, total_workers=2 → video lẻ (1,3,5...)
+        engine = SmartEngine(
+            worker_id=1,
+            total_workers=2,
+            chrome_portable=chrome2_path
+        )
+
+        result = engine.run(
+            str(excel_path),
+            callback=callback,
+            skip_compose=True,
+            skip_video=False,  # Tạo video
+            skip_references=True  # Chrome 1 đã tạo nv/loc
+        )
+
+        if result.get('error'):
+            log(f"  Video error: {result.get('error')}", "ERROR")
+            return False
+
+        log(f"  ✅ Videos (lẻ) created!")
+        return True
+
+    except Exception as e:
+        log(f"  Video exception: {e}", "ERROR")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def process_project_full_chrome2(code: str, callback=None) -> bool:
+    """Process a single project - CHROME 2 FULL mode."""
 
     def log(msg, level="INFO"):
         if callback:
@@ -140,7 +195,7 @@ def process_project_pic_basic_chrome2(code: str, callback=None) -> bool:
             print(f"[Chrome2] {msg}")
 
     log(f"\n{'='*60}")
-    log(f"[PIC BASIC CHROME2] Processing: {code}")
+    log(f"[FULL MODE - Chrome 2] Processing: {code}")
     log(f"{'='*60}")
 
     # Get Chrome 2 path
@@ -165,7 +220,6 @@ def process_project_pic_basic_chrome2(code: str, callback=None) -> bool:
 
     if not excel_path.exists():
         log(f"  Waiting for Chrome 1 to create Excel...")
-        # Đợi tối đa 120s
         for i in range(24):
             time.sleep(5)
             if excel_path.exists():
@@ -215,11 +269,11 @@ def process_project_pic_basic_chrome2(code: str, callback=None) -> bool:
         time.sleep(wait_interval)
         waited += wait_interval
 
-    # Step 4: Create images using SmartEngine
+    # Step 4: Create IMAGES using SmartEngine (scenes lẻ)
     try:
         from modules.smart_engine import SmartEngine
 
-        # Chrome 2: worker_id=1, total_workers=2, dùng chrome_portable_2
+        # Chrome 2: worker_id=1, total_workers=2
         engine = SmartEngine(
             worker_id=1,
             total_workers=2,
@@ -227,34 +281,44 @@ def process_project_pic_basic_chrome2(code: str, callback=None) -> bool:
         )
 
         log(f"  Excel: {excel_path.name}")
-        log(f"  Mode: CHROME 2 (scenes lẻ: 1,3,5,...)")
+        log(f"  Mode: CHROME 2 FULL (scenes lẻ: 1,3,5,...)")
 
-        # Run engine - images only, skip video, skip references (Chrome 1 tạo)
+        # Run engine - images only, skip video first
         result = engine.run(
             str(excel_path),
             callback=callback,
             skip_compose=True,
             skip_video=True,
-            skip_references=True
+            skip_references=True  # Chrome 1 tạo nv/loc
         )
 
         if result.get('error'):
-            log(f"  Error: {result.get('error')}", "ERROR")
+            log(f"  Image error: {result.get('error')}", "ERROR")
             return False
 
     except Exception as e:
-        log(f"  Exception: {e}", "ERROR")
+        log(f"  Image exception: {e}", "ERROR")
         import traceback
         traceback.print_exc()
         return False
 
-    # Step 5: Check completion
+    # Step 5: Đợi TẤT CẢ ảnh hoàn thành (Chrome 1 + 2)
+    log(f"\n[STEP 5] Waiting for all images to complete...")
+    if not is_local_pic_complete(local_dir, code):
+        if not wait_for_all_images(local_dir, code, timeout=600):
+            log(f"  Timeout waiting for images", "WARN")
+
+    # Step 6: Tạo VIDEO (scenes lẻ) - SONG SONG với Chrome 1
     if is_local_pic_complete(local_dir, code):
-        log(f"  Images complete!")
-        return True
-    else:
-        log(f"  Images incomplete", "WARN")
-        return False
+        log(f"\n[STEP 6] Creating videos (Chrome 2 = scenes lẻ)...")
+        if create_videos_for_project_chrome2(local_dir, code, chrome2_path, callback):
+            log(f"  ✅ Videos (lẻ) done!")
+        else:
+            log(f"  ⚠️ Video creation failed", "WARN")
+
+    # Chrome 2 không copy VISUAL - Chrome 1 sẽ làm
+    log(f"\n  ✅ Chrome 2 FULL done! (Chrome 1 sẽ copy VISUAL)")
+    return True
 
 
 def scan_incomplete_local_projects() -> list:
@@ -281,7 +345,7 @@ def scan_incomplete_local_projects() -> list:
 
         srt_path = item / f"{code}.srt"
         if has_excel_with_prompts(item, code):
-            print(f"    - {code}: incomplete (has Excel, no images)")
+            print(f"    - {code}: incomplete (has Excel)")
             incomplete.append(code)
         elif srt_path.exists():
             print(f"    - {code}: has SRT, no Excel")
@@ -334,16 +398,18 @@ def scan_master_projects() -> list:
 
 
 def run_scan_loop():
-    """Run continuous scan loop for IMAGE generation - CHROME 2."""
+    """Run continuous scan loop - CHROME 2 FULL mode."""
     chrome2_path = get_chrome2_path()
 
     print(f"\n{'='*60}")
-    print(f"  VE3 TOOL - WORKER PIC BASIC - CHROME 2")
+    print(f"  VE3 TOOL - CHROME 2 FULL MODE")
     print(f"{'='*60}")
     print(f"  Worker folder:   {TOOL_DIR.parent.name}")
     print(f"  Channel filter:  {WORKER_CHANNEL or 'ALL'}")
     print(f"  Chrome2:         {chrome2_path or 'NOT FOUND'}")
-    print(f"  Mode:            Scenes lẻ (1,3,5,...)")
+    print(f"  Mode:            FULL (chi tiết toàn bộ)")
+    print(f"  Images:          Scenes lẻ (1,3,5,...)")
+    print(f"  Videos:          Scenes lẻ (1,3,5,...)")
     print(f"{'='*60}")
 
     if not chrome2_path:
@@ -358,7 +424,7 @@ def run_scan_loop():
 
     while True:
         cycle += 1
-        print(f"\n[Chrome2 CYCLE {cycle}] Scanning...")
+        print(f"\n[Chrome2 FULL CYCLE {cycle}] Scanning...")
 
         incomplete_local = scan_incomplete_local_projects()
         pending_master = scan_master_projects()
@@ -377,18 +443,18 @@ def run_scan_loop():
 
             for code in pending:
                 try:
-                    success = process_project_pic_basic_chrome2(code)
+                    success = process_project_full_chrome2(code)
                     if not success:
-                        print(f"  [Chrome2] Skipping {code}, moving to next...")
+                        print(f"  Skipping {code}, moving to next...")
                         continue
                 except KeyboardInterrupt:
                     print("\n\nStopped by user.")
                     return
                 except Exception as e:
-                    print(f"  [Chrome2] Error processing {code}: {e}")
+                    print(f"  Error processing {code}: {e}")
                     continue
 
-            print(f"\n  [Chrome2] Processed all pending projects!")
+            print(f"\n  Processed all pending projects!")
             print(f"  Waiting {SCAN_INTERVAL}s... (Ctrl+C to stop)")
             try:
                 time.sleep(SCAN_INTERVAL)
@@ -399,12 +465,12 @@ def run_scan_loop():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='VE3 Worker PIC BASIC - Chrome 2')
+    parser = argparse.ArgumentParser(description='VE3 Chrome 2 FULL Mode')
     parser.add_argument('project', nargs='?', default=None, help='Project code')
     args = parser.parse_args()
 
     if args.project:
-        process_project_pic_basic_chrome2(args.project)
+        process_project_full_chrome2(args.project)
     else:
         run_scan_loop()
 

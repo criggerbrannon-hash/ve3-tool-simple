@@ -38,6 +38,35 @@ from run_worker import (
     SCAN_INTERVAL,
 )
 
+
+def safe_path_exists(path: Path) -> bool:
+    """
+    Safely check if a path exists, handling network disconnection errors.
+    Returns False if path doesn't exist OR if network is disconnected.
+    """
+    try:
+        return path.exists()
+    except (OSError, PermissionError) as e:
+        # WinError 1167: The device is not connected
+        # WinError 53: The network path was not found
+        # WinError 64: The specified network name is no longer available
+        print(f"  ⚠️ Network error checking path: {e}")
+        return False
+
+
+def safe_iterdir(path: Path) -> list:
+    """
+    Safely iterate over a directory, handling network disconnection errors.
+    Returns empty list if path doesn't exist OR if network is disconnected.
+    """
+    try:
+        if not path.exists():
+            return []
+        return list(path.iterdir())
+    except (OSError, PermissionError) as e:
+        print(f"  ⚠️ Network error listing directory: {e}")
+        return []
+
 # Detect paths
 AUTO_PATH = detect_auto_path()
 if AUTO_PATH:
@@ -377,30 +406,41 @@ def scan_master_projects() -> list:
     """Scan master PROJECTS folder for pending projects."""
     pending = []
 
-    if not MASTER_PROJECTS.exists():
+    if not safe_path_exists(MASTER_PROJECTS):
         return pending
 
-    for item in MASTER_PROJECTS.iterdir():
-        if not item.is_dir():
-            continue
+    for item in safe_iterdir(MASTER_PROJECTS):
+        try:
+            if not item.is_dir():
+                continue
 
-        code = item.name
+            code = item.name
 
-        if not matches_channel(code):
-            continue
+            if not matches_channel(code):
+                continue
 
-        if is_project_complete_on_master(code):
-            continue
+            if is_project_complete_on_master(code):
+                continue
 
-        excel_path = item / f"{code}_prompts.xlsx"
-        srt_path = item / f"{code}.srt"
+            excel_path = item / f"{code}_prompts.xlsx"
+            srt_path = item / f"{code}.srt"
 
-        if has_excel_with_prompts(item, code):
-            print(f"    - {code}: ready (has prompts)")
-            pending.append(code)
-        elif srt_path.exists():
-            print(f"    - {code}: has SRT")
-            pending.append(code)
+            # Wrap network path checks in try-except
+            try:
+                if has_excel_with_prompts(item, code):
+                    print(f"    - {code}: ready (has prompts)")
+                    pending.append(code)
+                elif srt_path.exists():
+                    print(f"    - {code}: has SRT")
+                    pending.append(code)
+            except (OSError, PermissionError) as e:
+                print(f"  ⚠️ Network error checking {code}: {e}")
+                continue
+
+        except (OSError, PermissionError) as e:
+            # Network disconnected while iterating
+            print(f"  ⚠️ Network error scanning: {e}")
+            break
 
     return sorted(pending)
 
