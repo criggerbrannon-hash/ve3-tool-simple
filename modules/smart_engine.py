@@ -2457,6 +2457,31 @@ class SmartEngine:
         # === 4. LOAD SCENE PROMPTS (chi scenes, bo qua characters da tao) ===
         self.log("[STEP 4] Load scene prompts...")
 
+        # === CHECK: Đảm bảo Excel đã hoàn thành (có scenes) ===
+        try:
+            from modules.excel_manager import PromptWorkbook
+            wb_check = PromptWorkbook(excel_path)
+            wb_check.load_or_create()
+            stats = wb_check.get_stats()
+            total_scenes = stats.get('total_scenes', 0)
+            scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+            total_chars = stats.get('total_characters', 0)
+
+            self.log(f"  [CHECK] Characters: {total_chars}, Scenes: {scenes_with_prompts}/{total_scenes}")
+
+            if total_scenes == 0 or scenes_with_prompts == 0:
+                self.log("⚠️ Excel chưa có scenes! Đang tạo lại...", "WARN")
+                if srt_path.exists():
+                    # Xóa Excel cũ và tạo mới
+                    excel_path.unlink()
+                    if not self.make_prompts(proj_dir, name, excel_path):
+                        return {"error": "prompts_failed_no_scenes"}
+                else:
+                    self.log("❌ Không có SRT để tạo scenes!", "ERROR")
+                    return {"error": "no_srt_no_scenes"}
+        except Exception as e:
+            self.log(f"  Check Excel error: {e}", "WARN")
+
         all_prompts = self._load_prompts(excel_path, proj_dir)
 
         if not all_prompts:
