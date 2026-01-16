@@ -886,7 +886,7 @@ SAMPLE SRT CONTENT (for character dialogue/description details):
 {targeted_srt_text[:8000] if targeted_srt_text else 'Use segment analysis above'}
 
 For each character, provide:
-1. portrait_prompt: Portrait on pure white background, 85mm lens, front-facing, Caucasian ethnicity, photorealistic 8K
+1. portrait_prompt: Portrait on pure white background, 85mm lens, front-facing, Caucasian, photorealistic 8K, NO TEXT
 2. character_lock: Short 10-15 word description for scene prompts
 3. is_minor: true if under 18 (child, teenager, baby, etc.)
 
@@ -897,7 +897,7 @@ Return JSON:
             "id": "char_id",
             "name": "Name",
             "role": "protagonist/supporting/narrator",
-            "portrait_prompt": "Portrait on pure white background, 85mm lens, [age]-year-old Caucasian [man/woman], [hair], [eyes], [clothing], front-facing neutral expression, photorealistic 8K",
+            "portrait_prompt": "Portrait on pure white background, 85mm lens, [age]-year-old Caucasian [man/woman], [hair], [eyes], [clothing], front-facing neutral expression, photorealistic 8K, no text, no watermark",
             "character_lock": "[age] Caucasian [man/woman], [hair], [eyes], [clothing]",
             "is_minor": false
         }}
