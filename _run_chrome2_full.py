@@ -202,6 +202,33 @@ def process_project_full_chrome2(code: str, callback=None) -> bool:
             log(f"  No Excel after 120s, skip!")
             return False
 
+    # Step 3.5: ĐỢI Chrome 1 tạo xong ảnh tham chiếu (nv/loc)
+    img_dir = local_dir / "img"
+    log(f"  Waiting for Chrome 1 to create reference images (nv/loc)...")
+
+    max_wait = 300  # Đợi tối đa 5 phút
+    wait_interval = 10
+    waited = 0
+
+    while waited < max_wait:
+        # Kiểm tra xem có ảnh nv_ hoặc loc_ chưa
+        if img_dir.exists():
+            nv_files = list(img_dir.glob("nv_*.png")) + list(img_dir.glob("nv_*.jpg"))
+            loc_files = list(img_dir.glob("loc_*.png")) + list(img_dir.glob("loc_*.jpg"))
+
+            if nv_files or loc_files:
+                log(f"  ✓ Found references: {len(nv_files)} nv, {len(loc_files)} loc")
+                # Đợi thêm 5s để đảm bảo Chrome 1 đã upload xong
+                time.sleep(5)
+                break
+
+        log(f"  Waiting for references... ({waited}s)")
+        time.sleep(wait_interval)
+        waited += wait_interval
+
+    if waited >= max_wait:
+        log(f"  ⚠️ Timeout waiting for references, proceeding anyway...", "WARN")
+
     # Step 4: Create IMAGES using SmartEngine (scenes lẻ)
     try:
         from modules.smart_engine import SmartEngine
