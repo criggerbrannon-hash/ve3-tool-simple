@@ -2011,10 +2011,11 @@ class DrissionFlowAPI:
                         self.log(f"🌐 Activating IPv6 lần đầu...")
                         working_ipv6 = rotator.init_with_working_ipv6()
                     else:
-                        # Đã activated trước đó → dùng IP hiện tại hoặc rotate
-                        working_ipv6 = rotator.current_ipv6 or rotator.get_next_ipv6()
+                        # Đã activated trước đó → giữ nguyên IP hiện tại (KHÔNG đổi)
+                        # Chỉ đổi IPv6 khi gặp 403 nhiều lần (xử lý ở chỗ khác)
+                        working_ipv6 = rotator.current_ipv6
                         if working_ipv6:
-                            rotator.set_ipv6(working_ipv6)
+                            self.log(f"🌐 Giữ nguyên IPv6: {working_ipv6}")
 
                     if working_ipv6:
                         self._ipv6_activated = True
