@@ -464,26 +464,26 @@ def get_prompts_from_excel(excel_path: Path, proj_dir: Path) -> List[Dict]:
 
     wb = PromptWorkbook(str(excel_path))
 
-    # Get characters
+    # Get characters - dùng english_prompt (không phải img_prompt)
     characters = wb.get_characters()
     for char in characters:
-        if char.img_prompt:
+        if char.english_prompt:
             char_id = char.id or f"nv{len(prompts) + 1}"
             prompts.append({
                 "id": char_id,
-                "prompt": char.img_prompt,
+                "prompt": char.english_prompt,
                 "output_path": str(nv_dir / f"{char_id}.png"),
                 "type": "character",
             })
 
-    # Get locations
+    # Get locations - dùng english_prompt (không phải img_prompt)
     locations = wb.get_locations()
     for loc in locations:
-        if loc.img_prompt:
+        if loc.english_prompt:
             loc_id = loc.id or f"loc{len(prompts) + 1}"
             prompts.append({
                 "id": loc_id,
-                "prompt": loc.img_prompt,
+                "prompt": loc.english_prompt,
                 "output_path": str(nv_dir / f"{loc_id}.png"),
                 "type": "location",
             })
