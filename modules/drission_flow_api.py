@@ -3120,7 +3120,7 @@ class DrissionFlowAPI:
         prompt: str,
         num_images: int = 1,
         image_inputs: Optional[List[Dict]] = None,
-        timeout: int = 120,
+        timeout: int = 60,
         force_model: str = ""
     ) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
@@ -3719,7 +3719,7 @@ class DrissionFlowAPI:
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
-        max_wait: int = 300,
+        max_wait: int = 180,
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
@@ -3986,7 +3986,7 @@ class DrissionFlowAPI:
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
-        max_wait: int = 300,
+        max_wait: int = 180,
         save_path: Optional[Path] = None,
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -4399,7 +4399,7 @@ class DrissionFlowAPI:
         save_path: Optional[Path] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
-        max_wait: int = 300,
+        max_wait: int = 180,
         timeout: int = 60,
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -4538,7 +4538,7 @@ class DrissionFlowAPI:
         save_path: Optional[Path] = None,
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
-        max_wait: int = 300,
+        max_wait: int = 180,
         timeout: int = 60
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
@@ -4660,7 +4660,7 @@ class DrissionFlowAPI:
         self.log("[I2V-FORCE] ✗ Timeout đợi video response", "ERROR")
         return False, None, "Timeout waiting for video response"
 
-    def _poll_video_operation_browser(self, operation: Dict, max_wait: int = 300) -> Optional[str]:
+    def _poll_video_operation_browser(self, operation: Dict, max_wait: int = 180) -> Optional[str]:
         """
         Poll video operation qua Browser (dùng fetch trong browser).
         Không cần gọi API trực tiếp, dùng Chrome's session/cookies.
@@ -4789,7 +4789,7 @@ class DrissionFlowAPI:
         prompt: str,
         save_path: Optional[Path] = None,
         video_model: str = "veo_3_1_r2v_fast_landscape_ultra_relaxed",
-        max_wait: int = 300,
+        max_wait: int = 180,
         timeout: int = 180,  # Tăng từ 60 → 180 giây
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -5249,7 +5249,7 @@ class DrissionFlowAPI:
         self,
         prompt: str,
         save_path: Optional[Path] = None,
-        max_wait: int = 300,
+        max_wait: int = 180,
         timeout: int = 60,
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -5463,7 +5463,7 @@ class DrissionFlowAPI:
         media_id: str,
         prompt: str,
         save_path: Optional[Path] = None,
-        max_wait: int = 300,
+        max_wait: int = 180,
         timeout: int = 60,
         max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
