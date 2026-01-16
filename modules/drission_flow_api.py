@@ -2458,6 +2458,16 @@ class DrissionFlowAPI:
             timeout = 10
 
         for refresh_count in range(max_refresh + 1):
+            # === CHECK LOGOUT TRƯỚC MỖI VÒNG ===
+            if self._is_logged_out():
+                self.log(f"[TEXTAREA] ⚠️ Phát hiện bị LOGOUT - auto login...")
+                if self._auto_login_google():
+                    self.log(f"[TEXTAREA] ✓ Đã login lại, tiếp tục đợi textarea...")
+                    time.sleep(2)
+                else:
+                    self.log(f"[TEXTAREA] ✗ Login thất bại", "ERROR")
+                    return False
+
             self.log(f"[TEXTAREA] Đợi textarea... (timeout={timeout}s, lần {refresh_count + 1}/{max_refresh + 1})")
 
             start_time = time.time()
@@ -4322,6 +4332,32 @@ class DrissionFlowAPI:
 
         for attempt in range(MAX_RETRIES):
             try:
+                # === CHECK LOGOUT TRƯỚC ===
+                if self._is_logged_out():
+                    self.log("[Mode] ⚠️ Phát hiện bị LOGOUT - auto login...")
+                    if self._auto_login_google():
+                        self.log("[Mode] ✓ Đã login lại")
+                        # Re-setup sau khi login
+                        time.sleep(2)
+                        continue
+                    else:
+                        self.log("[Mode] ✗ Login thất bại", "ERROR")
+                        return False
+
+                # === CHECK COMBOBOX TỒN TẠI ===
+                has_combobox = self.driver.run_js("""
+                    return document.querySelector('button[role="combobox"]') !== null;
+                """)
+
+                if not has_combobox:
+                    self.log(f"[Mode] ⚠️ Không tìm thấy combobox, F5 refresh... (attempt {attempt + 1})")
+                    self.driver.refresh()
+                    time.sleep(3)
+                    # Re-inject JS Interceptor sau refresh
+                    self._reset_tokens()
+                    self.driver.run_js(JS_INTERCEPTOR)
+                    continue
+
                 self.log(f"[Mode] Chuyển sang Image mode (attempt {attempt + 1}/{MAX_RETRIES})...")
 
                 # Dùng JS với setTimeout (đợi dropdown mở)
