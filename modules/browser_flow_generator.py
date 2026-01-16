@@ -3533,6 +3533,20 @@ class BrowserFlowGenerator:
         # Store reference
         self._drission_api = drission_api
 
+        # Đăng ký với ChromeManager để giám sát
+        try:
+            from modules.chrome_manager import get_chrome_manager
+            chrome_mgr = get_chrome_manager()
+            chrome_mgr.set_log_callback(self._log)
+            chrome_mgr.register_chrome(
+                worker_id=self.worker_id,
+                drission_api=drission_api,
+                project_url=saved_project_url or getattr(drission_api, '_current_project_url', '')
+            )
+            self._log(f"[Manager] Đã đăng ký Chrome {self.worker_id} với ChromeManager")
+        except Exception as e:
+            self._log(f"[Manager] Không đăng ký được với ChromeManager: {e}", "warn")
+
         # Generate images - use self.img_path as output directory
         return self._generate_images_drission_mode(prompts, self.img_path, excel_path)
 
@@ -3831,6 +3845,13 @@ class BrowserFlowGenerator:
                     self.stats["success"] += 1
                     consecutive_403 = 0  # Reset counter on success
 
+                    # Đánh dấu thành công với ChromeManager
+                    try:
+                        from modules.chrome_manager import get_chrome_manager
+                        get_chrome_manager().mark_success(self.worker_id)
+                    except:
+                        pass
+
                     # Update Excel if available - SAVE MEDIA_ID for SCENE images
                     if workbook and not is_reference_image:
                         try:
@@ -3881,6 +3902,26 @@ class BrowserFlowGenerator:
                 else:
                     self._log(f"   ✗ Thất bại: {error}", "error")
                     self.stats["failed"] += 1
+
+                    # Đánh dấu lỗi với ChromeManager để giám sát
+                    try:
+                        from modules.chrome_manager import get_chrome_manager
+                        chrome_mgr = get_chrome_manager()
+                        chrome_mgr.mark_error(self.worker_id, str(error))
+
+                        # Nếu Chrome bị đánh dấu ERROR, để Manager restart
+                        if not chrome_mgr.is_healthy(self.worker_id):
+                            self._log(f"[Manager] Chrome {self.worker_id} bị lỗi nhiều, đang restart...")
+                            if chrome_mgr.restart_chrome(self.worker_id):
+                                self._log(f"[Manager] ✓ Chrome {self.worker_id} đã restart")
+                                # Cập nhật reference
+                                worker = chrome_mgr.workers.get(self.worker_id)
+                                if worker and worker.drission_api:
+                                    drission_api = worker.drission_api
+                            else:
+                                self._log(f"[Manager] ✗ Restart Chrome {self.worker_id} thất bại", "warn")
+                    except Exception as mgr_e:
+                        pass  # Silent fail - fallback to original logic
 
                     # Check for token expiry - thử refresh và retry
                     if error and "401" in str(error):
