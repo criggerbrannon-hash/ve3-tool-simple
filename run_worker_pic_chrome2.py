@@ -82,12 +82,13 @@ def run_chrome2_pic_worker(excel_path: str):
 
         safe_print(f"[Chrome2-PIC] Running SmartEngine...")
 
-        # Run engine - images only, skip video
+        # Run engine - images only, skip video, skip character/location (Chrome 1 handles those)
         result = engine.run(
             excel_path,
             callback=log_callback,
             skip_compose=True,
-            skip_video=True
+            skip_video=True,
+            skip_references=True  # Chrome 2 chỉ tạo scenes, Chrome 1 tạo characters/locations
         )
 
         safe_print(f"[Chrome2-PIC] Done! Result: {result}")

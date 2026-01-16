@@ -1286,6 +1286,10 @@ class SmartEngine:
         Callback duoc goi khi characters prompts da duoc save.
         Bat dau generate character images song song.
         """
+        # Skip character generation nếu flag được set (Chrome 2)
+        if getattr(self, '_skip_references', False):
+            self.log("[STEP 3] Skip character generation (skip_references=True)")
+            return
         self._generate_characters_async(excel_path, proj_dir)
 
     def _on_total_scenes_known(self, total: int):
@@ -2275,7 +2279,8 @@ class SmartEngine:
         output_dir: str = None,
         callback: Callable = None,
         skip_compose: bool = False,
-        skip_video: bool = False
+        skip_video: bool = False,
+        skip_references: bool = False
     ) -> Dict:
         """
         BROWSER MODE PIPELINE - Tao anh bang JS automation.
@@ -2292,6 +2297,7 @@ class SmartEngine:
             output_dir: Thu muc output (optional)
             callback: Ham log callback
             skip_video: If True, skip video generation (image only mode)
+            skip_references: If True, skip character/location image generation (for Chrome 2)
 
         Returns:
             Dict with success/failed counts
@@ -2299,6 +2305,7 @@ class SmartEngine:
         self.callback = callback
         self.stop_flag = False
         self._skip_video = skip_video  # Flag to skip video generation
+        self._skip_references = skip_references  # Flag to skip character/location generation
 
         inp = Path(input_path)
         ext = inp.suffix.lower()
