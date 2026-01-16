@@ -913,10 +913,6 @@ JS_SWITCH_TO_LOWER_PRIORITY = '''
 })();
 '''
 
-# === MODULE-LEVEL FLAG ===
-# Chỉ kill Chrome cũ MỘT LẦN khi tool bắt đầu, không kill mỗi lần restart
-_INITIAL_CHROME_KILL_DONE = False
-
 
 class DrissionFlowAPI:
     """
@@ -2252,20 +2248,9 @@ class DrissionFlowAPI:
                 self._is_rotating_mode = False
                 self.log("⚠️ Không có proxy - chạy direct connection", "WARN")
 
-            # Tắt Chrome đang dùng profile này trước (tránh conflict)
+            # Tắt Chrome đang dùng CÙNG profile này trước (tránh conflict)
+            # CHÚ Ý: Chỉ kill Chrome dùng profile này, KHÔNG kill Chrome khác
             self._kill_chrome_using_profile()
-
-            # === AUTO KILL CHROME CŨ TRƯỚC KHI START ===
-            # CHỈ KILL LẦN ĐẦU khi tool bắt đầu, không kill mỗi lần restart
-            # (vì lúc chạy luôn có 2 Chrome song song, kill hết sẽ gây lỗi)
-            global _INITIAL_CHROME_KILL_DONE
-            if not _INITIAL_CHROME_KILL_DONE:
-                self.log("🔪 Kiểm tra và kill Chrome cũ nếu có (chỉ lần đầu)...")
-                self._auto_kill_conflicting_chrome()
-                _INITIAL_CHROME_KILL_DONE = True
-            else:
-                # Chỉ kill Chrome trên port này (không kill Chrome khác)
-                self._kill_chrome_on_port(self.chrome_port)
 
             # === XÓA TẤT CẢ LOCK FILES ===
             try:
