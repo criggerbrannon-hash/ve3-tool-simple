@@ -89,16 +89,20 @@ def run_chrome2_worker(excel_path: str):
     Chạy Chrome 2 worker (gọi từ subprocess).
     Đọc chrome_portable_2 từ settings.yaml.
     """
-    print(f"[Chrome2] Starting worker...")
+    # Force flush output để subprocess output được hiển thị
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
+
+    print(f"[Chrome2] Starting worker...", flush=True)
 
     chrome1, chrome2 = load_chrome_paths()
 
     if not chrome2:
-        print(f"[Chrome2] ERROR: chrome_portable_2 not configured!")
+        print(f"[Chrome2] ERROR: chrome_portable_2 not configured!", flush=True)
         return
 
-    print(f"[Chrome2] Using Chrome: {chrome2}")
-    print(f"[Chrome2] Excel: {excel_path}")
+    print(f"[Chrome2] Using Chrome: {chrome2}", flush=True)
+    print(f"[Chrome2] Excel: {excel_path}", flush=True)
 
     try:
         from modules.smart_engine import SmartEngine
@@ -189,15 +193,14 @@ def process_project_pic_basic_2(code: str, callback=None) -> bool:
     log(f"  Starting 2 Chrome instances in PARALLEL")
     log(f"{'='*60}")
 
-    # === START CHROME 2 AS SUBPROCESS (như run_worker làm) ===
+    # === START CHROME 2 AS SUBPROCESS (dùng script riêng như run_worker_video) ===
     chrome2_cmd = [
         sys.executable,
-        str(TOOL_DIR / "run_worker_pic_basic_2.py"),
-        "--chrome2",
+        str(TOOL_DIR / "run_worker_pic_chrome2.py"),
         "--excel", str(excel_path)
     ]
 
-    log(f"\n[PARALLEL] Starting Chrome2 subprocess...")
+    log(f"\n[PARALLEL] Starting Chrome2 subprocess (run_worker_pic_chrome2.py)...")
     log(f"[PARALLEL] Cmd: {' '.join(chrome2_cmd)}")
 
     chrome2_process = subprocess.Popen(
