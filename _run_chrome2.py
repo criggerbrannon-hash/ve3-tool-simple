@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-VE3 Tool - Worker PIC Mode (Image Generation ONLY)
-Chỉ tạo ảnh, không tạo video.
+VE3 Tool - Worker PIC BASIC Mode - CHROME 2
+============================================
+Copy y nguyên từ run_worker_pic_basic.py, chỉ đổi:
+- worker_id=1 (Chrome 2)
+- Dùng chrome_portable_2
+- skip_references=True (Chrome 1 tạo nv/loc)
+
+Chạy SONG SONG với run_worker_pic_basic.py
 
 Usage:
-    python run_worker_pic.py                     (quét và xử lý tự động)
-    python run_worker_pic.py AR47-0028           (chạy 1 project cụ thể)
+    python run_worker_pic_basic_chrome2.py                     (quét và xử lý tự động)
+    python run_worker_pic_basic_chrome2.py AR47-0028           (chạy 1 project cụ thể)
 """
 
 import sys
@@ -27,8 +33,6 @@ from run_worker import (
     is_project_complete_on_master,
     has_excel_with_prompts,
     needs_api_completion,
-    create_excel_with_api,
-    complete_excel_with_api,
     copy_from_master,
     copy_to_visual,
     delete_local_project,
@@ -47,24 +51,36 @@ else:
 LOCAL_PROJECTS = TOOL_DIR / "PROJECTS"
 WORKER_CHANNEL = get_channel_from_folder()
 
-# Global worker settings
-WORKER_ID = 0
-TOTAL_WORKERS = 1
+
+def get_chrome2_path():
+    """Get chrome_portable_2 from settings.yaml."""
+    import yaml
+    config_path = TOOL_DIR / "config" / "settings.yaml"
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+        chrome2 = config.get('chrome_portable_2', '')
+        if chrome2:
+            return chrome2
+
+    # Auto-detect
+    copy_chrome = TOOL_DIR / "GoogleChromePortable - Copy" / "GoogleChromePortable.exe"
+    if copy_chrome.exists():
+        return str(copy_chrome)
+    return None
 
 
 def is_local_pic_complete(project_dir: Path, name: str) -> bool:
-    """Check if local project has images created (ignore videos)."""
+    """Check if local project has images created."""
     img_dir = project_dir / "img"
     if not img_dir.exists():
         return False
 
-    # Count images only (png, jpg) - exclude videos
     img_files = list(img_dir.glob("*.png")) + list(img_dir.glob("*.jpg"))
 
     if len(img_files) == 0:
         return False
 
-    # Check Excel to see expected scene count
     try:
         from modules.excel_manager import PromptWorkbook
         excel_path = project_dir / f"{name}_prompts.xlsx"
@@ -85,22 +101,29 @@ def is_local_pic_complete(project_dir: Path, name: str) -> bool:
     return len(img_files) > 0
 
 
-def process_project_pic(code: str, callback=None) -> bool:
-    """Process a single project - IMAGE ONLY (no video)."""
+def process_project_pic_basic_chrome2(code: str, callback=None) -> bool:
+    """Process a single project - CHROME 2."""
 
     def log(msg, level="INFO"):
         if callback:
             callback(msg, level)
         else:
-            print(msg)
+            print(f"[Chrome2] {msg}")
 
     log(f"\n{'='*60}")
-    log(f"[PIC] Processing: {code}")
+    log(f"[PIC BASIC CHROME2] Processing: {code}")
     log(f"{'='*60}")
+
+    # Get Chrome 2 path
+    chrome2_path = get_chrome2_path()
+    if not chrome2_path:
+        log(f"  ERROR: chrome_portable_2 not found!", "ERROR")
+        return False
+    log(f"  Chrome2: {chrome2_path}")
 
     # Step 1: Check if already done on master
     if is_project_complete_on_master(code):
-        log(f"  ⏭️ Already in VISUAL folder, skip!")
+        log(f"  Already in VISUAL folder, skip!")
         return True
 
     # Step 2: Copy from master
@@ -108,62 +131,62 @@ def process_project_pic(code: str, callback=None) -> bool:
     if not local_dir:
         return False
 
-    # Step 3: Check/Create Excel
+    # Step 3: Check Excel - Chrome 2 KHÔNG tạo Excel, đợi Chrome 1
     excel_path = local_dir / f"{code}_prompts.xlsx"
-    srt_path = local_dir / f"{code}.srt"
 
     if not excel_path.exists():
-        if srt_path.exists():
-            log(f"  📋 No Excel found, creating from SRT...")
-            if not create_excel_with_api(local_dir, code):
-                log(f"  ❌ Failed to create Excel, skip!")
-                return False
-        else:
-            log(f"  ⏭️ No Excel and no SRT, skip!")
-            return False
-    elif not has_excel_with_prompts(local_dir, code):
-        log(f"  📋 Excel empty/corrupt, recreating...")
-        excel_path.unlink()
-        if not create_excel_with_api(local_dir, code):
-            log(f"  ❌ Failed to recreate Excel, skip!")
-            return False
-    elif needs_api_completion(local_dir, code):
-        log(f"  📋 Excel has [FALLBACK] prompts, trying API...")
-        complete_excel_with_api(local_dir, code)
+        log(f"  Waiting for Chrome 1 to create Excel...")
+        # Đợi tối đa 120s
+        for i in range(24):
+            time.sleep(5)
+            if excel_path.exists():
+                log(f"  Excel found!")
+                break
+            log(f"  Waiting... ({(i+1)*5}s)")
 
-    # Step 4: Create images ONLY (skip video)
+        if not excel_path.exists():
+            log(f"  No Excel after 120s, skip!")
+            return False
+
+    # Step 4: Create images using SmartEngine
     try:
         from modules.smart_engine import SmartEngine
 
+        # Chrome 2: worker_id=1, total_workers=2, dùng chrome_portable_2
         engine = SmartEngine(
-            worker_id=WORKER_ID,
-            total_workers=TOTAL_WORKERS
+            worker_id=1,
+            total_workers=2,
+            chrome_portable=chrome2_path
         )
 
-        log(f"  📋 Excel: {excel_path.name}")
-        log(f"  🖼️ MODE: Image ONLY (no video)")
+        log(f"  Excel: {excel_path.name}")
+        log(f"  Mode: CHROME 2 (scenes lẻ: 1,3,5,...)")
 
-        # Run engine - images only, skip video generation
-        result = engine.run(str(excel_path), callback=callback, skip_compose=True, skip_video=True)
+        # Run engine - images only, skip video, skip references (Chrome 1 tạo)
+        result = engine.run(
+            str(excel_path),
+            callback=callback,
+            skip_compose=True,
+            skip_video=True,
+            skip_references=True
+        )
 
         if result.get('error'):
-            log(f"  ❌ Error: {result.get('error')}", "ERROR")
+            log(f"  Error: {result.get('error')}", "ERROR")
             return False
 
     except Exception as e:
-        log(f"  ❌ Exception: {e}", "ERROR")
+        log(f"  Exception: {e}", "ERROR")
         import traceback
         traceback.print_exc()
         return False
 
-    # Step 5: Check completion and copy to VISUAL
+    # Step 5: Check completion
     if is_local_pic_complete(local_dir, code):
-        log(f"  ✅ Images complete!")
-        # Don't copy to VISUAL yet - let run_worker_video handle videos
-        # Or copy if user wants pic-only workflow
+        log(f"  Images complete!")
         return True
     else:
-        log(f"  ⚠️ Images incomplete", "WARN")
+        log(f"  Images incomplete", "WARN")
         return False
 
 
@@ -233,24 +256,32 @@ def scan_master_projects() -> list:
 
 
 def run_scan_loop():
-    """Run continuous scan loop for IMAGE generation."""
-    global AUTO_PATH, MASTER_PROJECTS, MASTER_VISUAL
+    """Run continuous scan loop for IMAGE generation - CHROME 2."""
+    chrome2_path = get_chrome2_path()
 
     print(f"\n{'='*60}")
-    print(f"  VE3 TOOL - WORKER PIC (Image Only)")
+    print(f"  VE3 TOOL - WORKER PIC BASIC - CHROME 2")
     print(f"{'='*60}")
     print(f"  Worker folder:   {TOOL_DIR.parent.name}")
     print(f"  Channel filter:  {WORKER_CHANNEL or 'ALL'}")
-    print(f"  Mode:            IMAGE ONLY (no video)")
+    print(f"  Chrome2:         {chrome2_path or 'NOT FOUND'}")
+    print(f"  Mode:            Scenes lẻ (1,3,5,...)")
     print(f"{'='*60}")
+
+    if not chrome2_path:
+        print("ERROR: chrome_portable_2 not configured!")
+        return
+
+    # Đợi Chrome 1 khởi động trước
+    print("\n[Chrome2] Waiting 10s for Chrome 1 to start...")
+    time.sleep(10)
 
     cycle = 0
 
     while True:
         cycle += 1
-        print(f"\n[PIC CYCLE {cycle}] Scanning...")
+        print(f"\n[Chrome2 CYCLE {cycle}] Scanning...")
 
-        # Find incomplete local + pending master
         incomplete_local = scan_incomplete_local_projects()
         pending_master = scan_master_projects()
         pending = list(dict.fromkeys(incomplete_local + pending_master))
@@ -268,18 +299,18 @@ def run_scan_loop():
 
             for code in pending:
                 try:
-                    success = process_project_pic(code)
+                    success = process_project_pic_basic_chrome2(code)
                     if not success:
-                        print(f"  ⏭️ Skipping {code}, moving to next...")
+                        print(f"  [Chrome2] Skipping {code}, moving to next...")
                         continue
                 except KeyboardInterrupt:
                     print("\n\nStopped by user.")
                     return
                 except Exception as e:
-                    print(f"  ❌ Error processing {code}: {e}")
+                    print(f"  [Chrome2] Error processing {code}: {e}")
                     continue
 
-            print(f"\n  ✅ Processed all pending projects!")
+            print(f"\n  [Chrome2] Processed all pending projects!")
             print(f"  Waiting {SCAN_INTERVAL}s... (Ctrl+C to stop)")
             try:
                 time.sleep(SCAN_INTERVAL)
@@ -289,20 +320,13 @@ def run_scan_loop():
 
 
 def main():
-    global WORKER_ID, TOTAL_WORKERS
-
     import argparse
-    parser = argparse.ArgumentParser(description='VE3 Worker PIC - Image Generation Only')
+    parser = argparse.ArgumentParser(description='VE3 Worker PIC BASIC - Chrome 2')
     parser.add_argument('project', nargs='?', default=None, help='Project code')
-    parser.add_argument('--worker-id', type=int, default=0, help='Worker ID')
-    parser.add_argument('--total-workers', type=int, default=1, help='Total workers')
     args = parser.parse_args()
 
-    WORKER_ID = args.worker_id
-    TOTAL_WORKERS = args.total_workers
-
     if args.project:
-        process_project_pic(args.project)
+        process_project_pic_basic_chrome2(args.project)
     else:
         run_scan_loop()
 

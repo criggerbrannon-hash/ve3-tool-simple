@@ -164,8 +164,11 @@ class ProgressivePromptsGenerator:
             return None
 
     def _extract_json(self, text: str) -> Optional[dict]:
-        """Extract JSON từ response text."""
+        """Extract JSON từ response text - với repair cho truncated JSON."""
         import re
+
+        if not text:
+            return None
 
         # Loại bỏ <think>...</think> tags (DeepSeek)
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
@@ -182,17 +185,85 @@ class ProgressivePromptsGenerator:
             try:
                 return json.loads(match.group(1))
             except:
-                pass
+                # Thử repair
+                repaired = self._repair_truncated_json(match.group(1))
+                if repaired:
+                    try:
+                        return json.loads(repaired)
+                    except:
+                        pass
 
         # Tìm JSON object
         match = re.search(r'\{[\s\S]*\}', text)
         if match:
+            json_str = match.group(0)
             try:
-                return json.loads(match.group(0))
+                return json.loads(json_str)
             except:
-                pass
+                # Thử repair truncated JSON
+                repaired = self._repair_truncated_json(json_str)
+                if repaired:
+                    try:
+                        return json.loads(repaired)
+                    except:
+                        pass
+
+        # Tìm JSON bắt đầu bằng { nhưng có thể bị cắt cuối
+        start_idx = text.find('{')
+        if start_idx != -1:
+            json_str = text[start_idx:]
+            repaired = self._repair_truncated_json(json_str)
+            if repaired:
+                try:
+                    return json.loads(repaired)
+                except:
+                    pass
 
         return None
+
+    def _repair_truncated_json(self, json_str: str) -> Optional[str]:
+        """Repair JSON bị truncated (thiếu closing brackets)."""
+        if not json_str:
+            return None
+
+        # Đếm brackets
+        open_braces = json_str.count('{')
+        close_braces = json_str.count('}')
+        open_brackets = json_str.count('[')
+        close_brackets = json_str.count(']')
+
+        # Nếu balanced thì return nguyên
+        if open_braces == close_braces and open_brackets == close_brackets:
+            return json_str
+
+        # Nếu có nhiều close hơn open -> JSON không valid
+        if close_braces > open_braces or close_brackets > open_brackets:
+            return None
+
+        # Cắt bỏ phần dở dang cuối và thêm closing brackets
+        # Tìm vị trí cuối cùng có thể là kết thúc hợp lệ
+        for i in range(len(json_str) - 1, max(0, len(json_str) - 200), -1):
+            char = json_str[i]
+            if char in '}]"':
+                test_str = json_str[:i+1]
+                # Đếm lại
+                ob = test_str.count('{')
+                cb = test_str.count('}')
+                oB = test_str.count('[')
+                cB = test_str.count(']')
+                # Thêm closing cần thiết
+                suffix = ']' * max(0, oB - cB) + '}' * max(0, ob - cb)
+                repaired = test_str + suffix
+                try:
+                    json.loads(repaired)
+                    return repaired
+                except:
+                    continue
+
+        # Fallback: Thêm closing brackets đơn giản
+        suffix = ']' * max(0, open_brackets - close_brackets)
+        suffix += '}' * max(0, open_braces - close_braces)
+        return json_str + suffix
 
     def _sample_text(self, text: str, total_chars: int = 8000) -> str:
         """
@@ -252,6 +323,90 @@ class ProgressivePromptsGenerator:
             if start_idx <= i <= end_idx:
                 srt_text += f"[{i}] {entry.start_time} --> {entry.end_time}\n{entry.text}\n\n"
         return srt_text
+
+    def _normalize_character_ids(self, characters_used: str, valid_char_ids: set) -> str:
+        """
+        Normalize character IDs từ API response về format chuẩn (nv_xxx).
+
+        Vấn đề: API có thể trả về "john, mary" thay vì "nv_john, nv_mary"
+        Giải pháp: Map về IDs đã biết trong valid_char_ids
+
+        Args:
+            characters_used: String từ API như "john, mary" hoặc "nv_john"
+            valid_char_ids: Set of valid IDs như {"nv_john", "nv_mary", "loc_office"}
+
+        Returns:
+            Normalized string như "nv_john, nv_mary"
+        """
+        if not characters_used or not valid_char_ids:
+            return characters_used
+
+        raw_ids = [x.strip() for x in characters_used.split(",") if x.strip()]
+        normalized = []
+
+        # Build lookup (lowercase -> original)
+        id_lookup = {cid.lower(): cid for cid in valid_char_ids}
+        # Also add versions without prefix
+        for cid in list(valid_char_ids):
+            if cid.startswith("nv_"):
+                id_lookup[cid[3:].lower()] = cid  # "john" -> "nv_john"
+            if cid.startswith("loc_"):
+                id_lookup[cid[4:].lower()] = cid  # "office" -> "loc_office"
+
+        for raw_id in raw_ids:
+            raw_lower = raw_id.lower()
+
+            # Tìm trong lookup
+            if raw_lower in id_lookup:
+                normalized.append(id_lookup[raw_lower])
+            elif raw_id in valid_char_ids:
+                normalized.append(raw_id)
+            elif f"nv_{raw_id}" in valid_char_ids:
+                normalized.append(f"nv_{raw_id}")
+            else:
+                # Không tìm thấy - giữ nguyên nhưng thêm nv_ prefix nếu chưa có
+                if not raw_id.startswith("nv_") and not raw_id.startswith("loc_"):
+                    normalized.append(f"nv_{raw_id}")
+                else:
+                    normalized.append(raw_id)
+
+        return ", ".join(normalized)
+
+    def _normalize_location_id(self, location_used: str, valid_loc_ids: set) -> str:
+        """
+        Normalize location ID từ API response về format chuẩn (loc_xxx).
+
+        Args:
+            location_used: String từ API như "office" hoặc "loc_office"
+            valid_loc_ids: Set of valid location IDs
+
+        Returns:
+            Normalized ID như "loc_office"
+        """
+        if not location_used or not valid_loc_ids:
+            return location_used
+
+        raw_id = location_used.strip()
+        raw_lower = raw_id.lower()
+
+        # Build lookup
+        id_lookup = {lid.lower(): lid for lid in valid_loc_ids}
+        for lid in list(valid_loc_ids):
+            if lid.startswith("loc_"):
+                id_lookup[lid[4:].lower()] = lid  # "office" -> "loc_office"
+
+        # Tìm trong lookup
+        if raw_lower in id_lookup:
+            return id_lookup[raw_lower]
+        elif raw_id in valid_loc_ids:
+            return raw_id
+        elif f"loc_{raw_id}" in valid_loc_ids:
+            return f"loc_{raw_id}"
+        else:
+            # Không tìm thấy - thêm loc_ prefix nếu chưa có
+            if not raw_id.startswith("loc_"):
+                return f"loc_{raw_id}"
+            return raw_id
 
     def _split_long_scene_cinematically(
         self,
@@ -606,8 +761,38 @@ Return JSON only:
         # Parse response
         data = self._extract_json(response)
         if not data or "segments" not in data:
-            self._log("  ERROR: Could not parse segments!", "ERROR")
-            return StepResult("analyze_story_segments", StepStatus.FAILED, "JSON parse failed")
+            self._log("  ERROR: Could not parse segments from API!", "ERROR")
+            self._log(f"  API Response (first 500 chars): {response[:500] if response else 'None'}", "DEBUG")
+
+            # === FALLBACK: Tạo segments đơn giản dựa trên SRT ===
+            self._log("  -> Creating FALLBACK segments based on SRT duration...")
+            total_srt = len(srt_entries)
+            total_duration = srt_entries[-1].end if srt_entries else 300
+
+            # Tính số segments (~60s mỗi segment, ~12 ảnh)
+            num_segments = max(1, int(total_duration / 60))
+            entries_per_seg = max(1, total_srt // num_segments)
+            images_per_seg = max(1, int(60 / 5))  # ~12 ảnh per 60s
+
+            segments = []
+            for i in range(num_segments):
+                seg_start = i * entries_per_seg + 1
+                seg_end = min((i + 1) * entries_per_seg, total_srt)
+                if i == num_segments - 1:
+                    seg_end = total_srt  # Last segment gets all remaining
+
+                segments.append({
+                    "segment_id": i + 1,
+                    "segment_name": f"Part {i + 1}",
+                    "message": f"Story segment {i + 1}",
+                    "key_elements": [],
+                    "image_count": images_per_seg,
+                    "srt_range_start": seg_start,
+                    "srt_range_end": seg_end
+                })
+
+            self._log(f"  -> Created {len(segments)} fallback segments")
+            data = {"segments": segments}
 
         segments = data["segments"]
         total_srt = len(srt_entries)
@@ -802,26 +987,19 @@ SAMPLE SRT CONTENT (for character dialogue/description details):
 {targeted_srt_text[:8000] if targeted_srt_text else 'Use segment analysis above'}
 
 For each character, provide:
-1. portrait_prompt: Full description for generating a reference portrait (white background, portrait style)
-2. character_lock: Short 10-15 word description to use in scene prompts (for consistency)
-3. is_minor: TRUE if character is under 18 years old (child, teenager, baby, infant, etc.)
+1. portrait_prompt: Portrait on pure white background, 85mm lens, front-facing, Caucasian, photorealistic 8K, NO TEXT
+2. character_lock: Short 10-15 word description for scene prompts
+3. is_minor: true if under 18 (child, teenager, baby, etc.)
 
-IMPORTANT: Identify minors accurately based on context clues:
-- Age mentions (e.g., "5-year-old", "teenager", "16 years old")
-- Role descriptions (e.g., "son", "daughter", "child", "kid", "baby", "infant", "toddler")
-- School context (e.g., "student", "high school", "elementary")
-- Any character described as young, minor, underage, or child-like
-
-Return JSON only:
+Return JSON:
 {{
     "characters": [
         {{
             "id": "char_id",
-            "name": "Character Name",
-            "role": "protagonist/antagonist/supporting/narrator",
-            "portrait_prompt": "detailed portrait description for image generation, white background",
-            "character_lock": "short description for scene prompts (10-15 words)",
-            "vietnamese_description": "Optional alternate description",
+            "name": "Name",
+            "role": "protagonist/supporting/narrator",
+            "portrait_prompt": "Portrait on pure white background, 85mm lens, [age]-year-old Caucasian [man/woman], [hair], [eyes], [clothing], front-facing neutral expression, photorealistic 8K, no text, no watermark",
+            "character_lock": "[age] Caucasian [man/woman], [hair], [eyes], [clothing]",
             "is_minor": false
         }}
     ]
@@ -843,11 +1021,17 @@ Return JSON only:
         # Save to Excel
         try:
             minor_count = 0
+            char_counter = 0  # Đếm để tạo ID đơn giản: nv1, nv2, nv3...
+
             for char_data in data["characters"]:
-                char_id = char_data.get("id", "")
-                # Đảm bảo id bắt đầu bằng "nv_"
-                if not char_id.startswith("nv_"):
-                    char_id = f"nv_{char_id}"
+                role = char_data.get("role", "supporting").lower()
+
+                # Tạo ID đơn giản và nhất quán
+                if role == "narrator" or "narrator" in char_data.get("name", "").lower():
+                    char_id = "nvc"  # Narrator luôn là nvc
+                else:
+                    char_counter += 1
+                    char_id = f"nv{char_counter}"  # nv1, nv2, nv3...
 
                 # Detect trẻ vị thành niên (dưới 18 tuổi)
                 is_minor = char_data.get("is_minor", False)
@@ -1022,11 +1206,11 @@ Return JSON only:
 
         # Save to Excel - LƯU VÀO SHEET CHARACTERS với id loc_xxx
         try:
+            loc_counter = 0  # Đếm để tạo ID đơn giản: loc1, loc2, loc3...
+
             for loc_data in data["locations"]:
-                loc_id = loc_data.get("id", "")
-                # Đảm bảo id bắt đầu bằng "loc_"
-                if not loc_id.startswith("loc_"):
-                    loc_id = f"loc_{loc_id}"
+                loc_counter += 1
+                loc_id = f"loc{loc_counter}"  # Đơn giản: loc1, loc2, loc3...
 
                 # Tạo Character với role="location" thay vì Location riêng
                 loc_char = Character(
@@ -1340,6 +1524,10 @@ Return JSON only:
         char_locks = [f"- {c.id}: {c.character_lock}" for c in characters if c.character_lock]
         loc_locks = [f"- {loc.id}: {loc.location_lock}" for loc in locations if hasattr(loc, 'location_lock') and loc.location_lock]
 
+        # Build valid ID sets for normalization
+        valid_char_ids = {c.id for c in characters}
+        valid_loc_ids = {loc.id for loc in locations}
+
         # Chia SRT entries thành batches ~6000 chars
         MAX_BATCH_CHARS = 6000
         batches = []
@@ -1395,6 +1583,13 @@ Create scenes (~8s each). Return JSON:
             if data and "scenes" in data:
                 for scene in data["scenes"]:
                     scene["scene_id"] = scene_id_counter
+
+                    # Normalize IDs từ API response
+                    raw_chars = scene.get("characters_used", "")
+                    raw_loc = scene.get("location_used", "")
+                    scene["characters_used"] = self._normalize_character_ids(raw_chars, valid_char_ids)
+                    scene["location_used"] = self._normalize_location_id(raw_loc, valid_loc_ids)
+
                     all_scenes.append(scene)
                     scene_id_counter += 1
 
@@ -1457,16 +1652,23 @@ Create scenes (~8s each). Return JSON:
 
         context_lock = story_analysis.get("context_lock", "")
 
-        # Build character/location info
+        # Build character/location info + valid ID sets for normalization
         char_locks = []
+        valid_char_ids = set()  # Để normalize IDs từ API response
         for c in characters:
+            valid_char_ids.add(c.id)
             if c.character_lock:
                 char_locks.append(f"- {c.id}: {c.character_lock}")
 
         loc_locks = []
+        valid_loc_ids = set()  # Để normalize IDs từ API response
         for loc in locations:
+            valid_loc_ids.add(loc.id)
             if hasattr(loc, 'location_lock') and loc.location_lock:
                 loc_locks.append(f"- {loc.id}: {loc.location_lock}")
+
+        self._log(f"  Valid char IDs: {valid_char_ids}")
+        self._log(f"  Valid loc IDs: {valid_loc_ids}")
 
         # Process each segment
         all_scenes = []
@@ -1625,9 +1827,17 @@ Create exactly {image_count} scenes!"""
             if len(api_scenes) != image_count:
                 self._log(f"     -> Warning: Expected {image_count}, got {len(api_scenes)}")
 
-            # Update scene IDs to be continuous
+            # Update scene IDs to be continuous + NORMALIZE character/location IDs
             for scene in api_scenes:
                 scene["scene_id"] = scene_id_counter
+
+                # Normalize IDs từ API response về format chuẩn
+                raw_chars = scene.get("characters_used", "")
+                raw_loc = scene.get("location_used", "")
+
+                scene["characters_used"] = self._normalize_character_ids(raw_chars, valid_char_ids)
+                scene["location_used"] = self._normalize_location_id(raw_loc, valid_loc_ids)
+
                 all_scenes.append(scene)
                 scene_id_counter += 1
 

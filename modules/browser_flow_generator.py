@@ -73,7 +73,8 @@ class BrowserFlowGenerator:
         verbose: bool = True,
         config_path: str = "config/settings.yaml",
         worker_id: int = 0,
-        total_workers: int = 1
+        total_workers: int = 1,
+        chrome_portable: str = None
     ):
         """
         Khoi tao BrowserFlowGenerator.
@@ -86,6 +87,7 @@ class BrowserFlowGenerator:
             config_path: Duong dan file config
             worker_id: Worker ID for parallel processing (affects proxy, Chrome port)
             total_workers: Total number of workers (for window layout)
+            chrome_portable: Chrome Portable path (overrides config)
         """
         if not SELENIUM_AVAILABLE:
             raise ImportError(
@@ -105,6 +107,13 @@ class BrowserFlowGenerator:
         config_file = Path(config_path)
         if config_file.exists():
             self.config = load_settings(config_file)  # Pass Path object, not string
+
+        # Override chrome_portable if passed (for Chrome 2 parallel mode)
+        if chrome_portable:
+            self.config['chrome_portable'] = chrome_portable
+            self._chrome_portable_override = True
+        else:
+            self._chrome_portable_override = False
 
         # Paths
         self.img_path = self.project_path / "img"
@@ -164,7 +173,12 @@ class BrowserFlowGenerator:
                 "error": "[ERROR]",
                 "warn": "[WARN]",
             }
-            print(f"[{timestamp}] {icons.get(level, '')} {message}")
+            full_msg = f"[{timestamp}] {icons.get(level, '')} {message}"
+            # Handle encoding issues on Windows console
+            try:
+                print(full_msg)
+            except UnicodeEncodeError:
+                print(full_msg.encode('ascii', 'replace').decode('ascii'))
 
     def _get_profile_path(self) -> Optional[str]:
         """
@@ -3604,20 +3618,24 @@ class BrowserFlowGenerator:
             self._log(f"[INFO] Reference images (nv/loc): {ref_ids}")
 
         # === PARALLEL CHROME: chia scene cho nhiều Chrome ===
-        # Cách dùng: python run_worker.py 1 (hoặc 2)
-        # Terminal 1 → Chrome 1 làm scenes 1,3,5,... + ảnh nv*/loc*
-        # Terminal 2 → Chrome 2 làm scenes 2,4,6,...
-        # Format: "1/2", "2/4", etc.
-        parallel_chrome = os.environ.get('PARALLEL_CHROME', '') or str(self.config.get('parallel_chrome', ''))
-        worker_id, total_workers = 0, 1
-        if parallel_chrome and '/' in parallel_chrome:
-            try:
-                parts = parallel_chrome.split('/')
-                worker_id = int(parts[0])
-                total_workers = int(parts[1])
-                self._log(f"[PARALLEL] Chrome {worker_id}/{total_workers} - Scenes: {worker_id},{worker_id+total_workers},{worker_id+2*total_workers}...")
-            except:
-                worker_id, total_workers = 0, 1
+        # Ưu tiên 1: self.worker_id và self.total_workers (từ constructor - Chrome 2 mode)
+        # Ưu tiên 2: PARALLEL_CHROME env/config (format "1/2", "2/4", etc.)
+        worker_id = getattr(self, 'worker_id', 0) or 0
+        total_workers = getattr(self, 'total_workers', 1) or 1
+
+        # Fallback to PARALLEL_CHROME env/config nếu chưa set từ constructor
+        if total_workers <= 1:
+            parallel_chrome = os.environ.get('PARALLEL_CHROME', '') or str(self.config.get('parallel_chrome', ''))
+            if parallel_chrome and '/' in parallel_chrome:
+                try:
+                    parts = parallel_chrome.split('/')
+                    worker_id = int(parts[0])
+                    total_workers = int(parts[1])
+                except:
+                    pass
+
+        if total_workers > 1:
+            self._log(f"[PARALLEL] Chrome {worker_id}/{total_workers} - Worker sẽ xử lý scenes theo modulo")
 
         for i, prompt_data in enumerate(prompts):
             pid = str(prompt_data.get('id', i + 1))
@@ -3658,6 +3676,22 @@ class BrowserFlowGenerator:
 
             # Xác định là ảnh tham chiếu (nv*/loc*) hay ảnh scene
             is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+
+            # === PARALLEL MODE: Reload media_ids từ Excel trước mỗi scene ===
+            # Chrome 2 cần lấy media_ids mới từ Chrome 1 (đang chạy song song)
+            if not is_reference_image and total_workers > 1:
+                try:
+                    if workbook:
+                        fresh_media_ids = workbook.get_media_ids()
+                        if fresh_media_ids:
+                            # Chỉ log nếu có media_ids mới
+                            new_ids = set(fresh_media_ids.keys()) - set(excel_media_ids.keys())
+                            if new_ids:
+                                self._log(f"   [PARALLEL] Reload Excel: +{len(new_ids)} media_ids mới: {list(new_ids)}")
+                            excel_media_ids = fresh_media_ids
+                            all_media_ids = {**cached_media_names, **excel_media_ids}
+                except Exception as e:
+                    self._log(f"   [PARALLEL] Lỗi reload media_ids: {e}", "warn")
 
             # Xác định thư mục lưu: nv*/loc* -> nv_path (tham chiếu), còn lại -> img_path
             if is_reference_image:
@@ -3888,6 +3922,13 @@ class BrowserFlowGenerator:
                                 self._log("✗ Không restart được Chrome", "error")
                         except Exception as e:
                             self._log(f"✗ Restart error: {e}", "error")
+
+                    # Check for POLICY_VIOLATION - Skip prompt immediately (đã retry trong drission_flow_api)
+                    if error and "POLICY_VIOLATION" in str(error):
+                        self._log(f"⚠️ POLICY VIOLATION - Prompt vi phạm nội dung! SKIP {pid}", "warn")
+                        self.stats["skipped"] = self.stats.get("skipped", 0) + 1
+                        self.stats["failed"] -= 1  # Undo fail count (đã đánh dấu failed trước đó)
+                        continue  # Skip to next prompt
 
                     # Check for 400 - Invalid argument (reference image expired or invalid prompt)
                     if error and "400" in str(error):

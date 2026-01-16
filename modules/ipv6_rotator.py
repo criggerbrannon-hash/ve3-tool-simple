@@ -380,6 +380,12 @@ class IPv6Rotator:
             True nếu thành công
         """
         try:
+            # === SKIP NẾU ĐÃ DÙNG IPv6 NÀY ===
+            # Tránh thao tác thừa khi restart Chrome
+            if self.current_ipv6 and self.current_ipv6.lower() == new_ipv6.lower():
+                self.log(f"[IPv6] ✓ Already using: {new_ipv6}")
+                return True
+
             self.log(f"[IPv6] 🔄 Changing to: {new_ipv6}")
 
             # Collect all netsh commands

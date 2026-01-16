@@ -107,7 +107,7 @@ class SmartEngine:
     # Chi refresh khi API tra loi 401 (authentication error)
     # Dieu nay toi uu hon vi token thuong valid lau hon 50 phut
 
-    def __init__(self, config_path: str = None, assigned_profile: str = None, worker_id: int = 0, total_workers: int = 1):
+    def __init__(self, config_path: str = None, assigned_profile: str = None, worker_id: int = 0, total_workers: int = 1, chrome_portable: str = None):
         """
         Initialize SmartEngine.
 
@@ -116,6 +116,7 @@ class SmartEngine:
             assigned_profile: Specific Chrome profile name to use (for parallel processing)
             worker_id: Worker ID for parallel processing (affects proxy selection, Chrome port)
             total_workers: Total number of workers (for window layout: 1=full, 2=split, ...)
+            chrome_portable: Path to Chrome Portable exe (overrides settings.yaml)
         """
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
@@ -131,7 +132,9 @@ class SmartEngine:
         self.tokens_path = self.config_path.parent / "tokens.json"
 
         self.chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        self.chrome_portable = ""  # Chrome portable đã đăng nhập sẵn
+        # Chrome portable - nếu truyền vào constructor thì KHÔNG bị override bởi settings.yaml
+        self.chrome_portable = chrome_portable or ""
+        self._chrome_portable_override = bool(chrome_portable)  # Flag để không bị override
 
         # Assigned profile for parallel processing
         self.assigned_profile = assigned_profile
@@ -214,7 +217,11 @@ class SmartEngine:
             self.callback(full_msg)
         else:
             # Fallback to print only when no GUI callback
-            print(full_msg)
+            # Handle encoding issues on Windows console
+            try:
+                print(full_msg)
+            except UnicodeEncodeError:
+                print(full_msg.encode('ascii', 'replace').decode('ascii'))
 
     def load_config(self):
         """Load config."""
@@ -230,10 +237,14 @@ class SmartEngine:
                 self.verbose_log = settings.get('verbose_log', False)
 
                 # Chrome portable - ưu tiên cao nhất (KHÔNG check exists)
-                chrome_portable = settings.get('chrome_portable', '')
-                if chrome_portable:
-                    self.chrome_portable = chrome_portable
-                    self.log(f"[Config] Chrome portable: {chrome_portable}", "INFO")
+                # Nếu đã được truyền vào constructor thì KHÔNG override
+                if not self._chrome_portable_override:
+                    chrome_portable = settings.get('chrome_portable', '')
+                    if chrome_portable:
+                        self.chrome_portable = chrome_portable
+                        self.log(f"[Config] Chrome portable: {chrome_portable}", "INFO")
+                else:
+                    self.log(f"[Config] Chrome portable (override): {self.chrome_portable}", "INFO")
 
                 # Chrome path fallback
                 chrome_path = settings.get('chrome_path', '')
@@ -242,8 +253,8 @@ class SmartEngine:
             except:
                 pass
 
-        # === AUTO-DETECT CHROME PORTABLE (nếu chưa có từ settings) ===
-        if not self.chrome_portable:
+        # === AUTO-DETECT CHROME PORTABLE (nếu chưa có từ settings và không override) ===
+        if not self.chrome_portable and not self._chrome_portable_override:
             import platform
             if platform.system() == 'Windows':
                 chrome_locations = [
@@ -1170,20 +1181,16 @@ class SmartEngine:
         Generate character images trong background thread.
         Duoc goi tu callback khi characters ready.
         Respect generation_mode setting (api hoac chrome).
+
+        QUAN TRỌNG: Retry nhiều lần cho đến khi TẤT CẢ characters (trừ skip) có ảnh!
+        Vì scenes cần reference images từ characters.
         """
+        MAX_RETRIES = 5  # Số lần retry tối đa
+
         def _worker():
             try:
                 self.log("[PARALLEL] Bat dau tao anh nhan vat (background)...")
-
-                # Load character prompts
-                char_prompts = self._load_character_prompts(excel_path, proj_dir)
-
-                if not char_prompts:
-                    self.log("[PARALLEL] Khong co character prompts moi can tao")
-                    self._character_gen_result = {"success": 0, "failed": 0}
-                    return
-
-                self.log(f"[PARALLEL] Tao {len(char_prompts)} anh nhan vat...")
+                self.log(f"[PARALLEL] MAX_RETRIES = {MAX_RETRIES} (đảm bảo có đủ ảnh cho scenes)")
 
                 # Check generation_mode setting
                 generation_mode = 'api'  # Default
@@ -1197,16 +1204,52 @@ class SmartEngine:
                 except:
                     pass
 
-                # Generate using correct mode
-                if generation_mode == 'api':
-                    self.log("[PARALLEL] Dung API MODE cho characters...")
-                    results = self.generate_images_api(char_prompts, proj_dir)
-                else:
-                    self.log("[PARALLEL] Dung BROWSER MODE cho characters...")
-                    results = self.generate_images_browser(char_prompts, proj_dir)
+                total_success = 0
+                total_failed = 0
 
-                self._character_gen_result = results
-                self.log(f"[PARALLEL] Xong! Success={results.get('success', 0)}, Failed={results.get('failed', 0)}")
+                for retry in range(MAX_RETRIES):
+                    # Load character prompts (chỉ những cái chưa có ảnh/media_id)
+                    char_prompts = self._load_character_prompts(excel_path, proj_dir)
+
+                    if not char_prompts:
+                        if retry == 0:
+                            self.log("[PARALLEL] Tất cả characters đã có ảnh!")
+                        else:
+                            self.log(f"[PARALLEL] ✓ Retry {retry}: Tất cả characters đã có ảnh!")
+                        self._character_gen_result = {"success": total_success, "failed": 0}
+                        return
+
+                    self.log(f"[PARALLEL] {'Lần đầu' if retry == 0 else f'Retry {retry}'}: Còn {len(char_prompts)} characters cần tạo...")
+
+                    # Generate using correct mode
+                    if generation_mode == 'api':
+                        results = self.generate_images_api(char_prompts, proj_dir)
+                    else:
+                        results = self.generate_images_browser(char_prompts, proj_dir)
+
+                    success = results.get('success', 0)
+                    failed = results.get('failed', 0)
+                    total_success += success
+
+                    self.log(f"[PARALLEL] {'Lần đầu' if retry == 0 else f'Retry {retry}'}: Success={success}, Failed={failed}")
+
+                    # Nếu tất cả đã thành công trong lần này → xong
+                    if failed == 0:
+                        self.log(f"[PARALLEL] ✓ Tất cả characters đã tạo thành công!")
+                        break
+
+                    # Nếu còn retry và có failed → đợi rồi retry
+                    if retry < MAX_RETRIES - 1:
+                        wait_time = min(5 * (retry + 1), 30)  # 5s, 10s, 15s, ..., max 30s
+                        self.log(f"[PARALLEL] ⚠️ Còn {failed} characters fail - đợi {wait_time}s rồi retry...")
+                        import time
+                        time.sleep(wait_time)
+                    else:
+                        total_failed = failed
+                        self.log(f"[PARALLEL] ⚠️ Hết {MAX_RETRIES} lần retry, còn {failed} characters chưa có ảnh!", "WARN")
+
+                self._character_gen_result = {"success": total_success, "failed": total_failed}
+                self.log(f"[PARALLEL] Hoàn thành! Total Success={total_success}, Final Failed={total_failed}")
 
             except Exception as e:
                 self._character_gen_error = str(e)
@@ -1243,6 +1286,10 @@ class SmartEngine:
         Callback duoc goi khi characters prompts da duoc save.
         Bat dau generate character images song song.
         """
+        # Skip character generation nếu flag được set (Chrome 2)
+        if getattr(self, '_skip_references', False):
+            self.log("[STEP 3] Skip character generation (skip_references=True)")
+            return
         self._generate_characters_async(excel_path, proj_dir)
 
     def _on_total_scenes_known(self, total: int):
@@ -1257,6 +1304,8 @@ class SmartEngine:
         """
         Callback khi một batch scenes được save vào Excel.
         Bắt đầu generate scene images song song nếu characters đã xong.
+
+        QUAN TRỌNG: Phải đợi characters xong vì scenes cần reference images!
         """
         self.log(f"[PIPELINE] Scenes batch ready: {saved_count}/{total_count}")
 
@@ -1270,6 +1319,16 @@ class SmartEngine:
             self.log(f"[PIPELINE] Characters chưa xong - queue {saved_count} scenes để đợi...")
             self._scenes_gen_queue.append((excel_path, proj_dir, saved_count))
             return
+
+        # Characters đã xong - kiểm tra kết quả
+        if hasattr(self, '_character_gen_result') and self._character_gen_result:
+            char_result = self._character_gen_result
+            char_failed = char_result.get('failed', 0)
+            char_success = char_result.get('success', 0)
+            if char_failed > 0:
+                self.log(f"[PIPELINE] ⚠️ Characters có {char_failed} ảnh fail - scenes có thể thiếu reference!", "WARN")
+            else:
+                self.log(f"[PIPELINE] ✓ Characters OK ({char_success} ảnh) - bắt đầu scenes")
 
         # Characters đã xong hoặc không có characters - bắt đầu generate scenes
         if not self._scenes_gen_started:
@@ -1745,7 +1804,8 @@ class SmartEngine:
                 verbose=True,
                 config_path=str(settings_path),
                 worker_id=chrome1_worker_id,  # For parallel processing
-                total_workers=chrome1_total_workers  # For window layout
+                total_workers=chrome1_total_workers,  # For window layout
+                chrome_portable=self.chrome_portable if self._chrome_portable_override else None
             )
 
             # === QUAN TRỌNG: Load project_id từ Excel khi chạy lại (RESUME MODE) ===
@@ -2023,7 +2083,8 @@ class SmartEngine:
                     headless=headless,
                     verbose=True,
                     worker_id=chrome1_worker_id,  # For parallel processing
-                    total_workers=chrome1_total_workers  # For window layout
+                    total_workers=chrome1_total_workers,  # For window layout
+                    chrome_portable=self.chrome_portable if self._chrome_portable_override else None
                 )
                 self._browser_generator = generator
                 # Restore project_id tu generator cu
@@ -2220,7 +2281,8 @@ class SmartEngine:
         output_dir: str = None,
         callback: Callable = None,
         skip_compose: bool = False,
-        skip_video: bool = False
+        skip_video: bool = False,
+        skip_references: bool = False
     ) -> Dict:
         """
         BROWSER MODE PIPELINE - Tao anh bang JS automation.
@@ -2237,6 +2299,7 @@ class SmartEngine:
             output_dir: Thu muc output (optional)
             callback: Ham log callback
             skip_video: If True, skip video generation (image only mode)
+            skip_references: If True, skip character/location image generation (for Chrome 2)
 
         Returns:
             Dict with success/failed counts
@@ -2244,6 +2307,7 @@ class SmartEngine:
         self.callback = callback
         self.stop_flag = False
         self._skip_video = skip_video  # Flag to skip video generation
+        self._skip_references = skip_references  # Flag to skip character/location generation
 
         inp = Path(input_path)
         ext = inp.suffix.lower()
@@ -2412,6 +2476,31 @@ class SmartEngine:
 
         # === 4. LOAD SCENE PROMPTS (chi scenes, bo qua characters da tao) ===
         self.log("[STEP 4] Load scene prompts...")
+
+        # === CHECK: Đảm bảo Excel đã hoàn thành (có scenes) ===
+        try:
+            from modules.excel_manager import PromptWorkbook
+            wb_check = PromptWorkbook(excel_path)
+            wb_check.load_or_create()
+            stats = wb_check.get_stats()
+            total_scenes = stats.get('total_scenes', 0)
+            scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+            total_chars = stats.get('total_characters', 0)
+
+            self.log(f"  [CHECK] Characters: {total_chars}, Scenes: {scenes_with_prompts}/{total_scenes}")
+
+            if total_scenes == 0 or scenes_with_prompts == 0:
+                self.log("⚠️ Excel chưa có scenes! Đang tạo lại...", "WARN")
+                if srt_path.exists():
+                    # Xóa Excel cũ và tạo mới
+                    excel_path.unlink()
+                    if not self.make_prompts(proj_dir, name, excel_path):
+                        return {"error": "prompts_failed_no_scenes"}
+                else:
+                    self.log("❌ Không có SRT để tạo scenes!", "ERROR")
+                    return {"error": "no_srt_no_scenes"}
+        except Exception as e:
+            self.log(f"  Check Excel error: {e}", "WARN")
 
         all_prompts = self._load_prompts(excel_path, proj_dir)
 
