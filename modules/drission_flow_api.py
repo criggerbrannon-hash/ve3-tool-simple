@@ -366,6 +366,16 @@ window._t2vToI2vConfig=null; // Config để convert T2V request thành I2V (th�
                         return response;
                     }
 
+                    // === 400 ERROR: Policy violation (prompt bị cấm) ===
+                    if (response.status === 400 || (data.error && data.error.code === 400)) {
+                        console.log('[RESPONSE] ✗ 400 POLICY VIOLATION - Prompt rejected!');
+                        var errorMsg = data.error ? data.error.message : 'Policy violation';
+                        window._response = {error: {code: 400, message: errorMsg}};
+                        window._responseError = 'Error 400: ' + errorMsg;
+                        window._requestPending = false;
+                        return response;
+                    }
+
                     // Check nếu có media MỚI với fifeUrl → trigger ngay
                     if (data.media && data.media.length > 0) {
                         var readyMedia = data.media.filter(function(m) {
@@ -3389,6 +3399,22 @@ class DrissionFlowAPI:
                     else:
                         return False, [], error
 
+                # === 400 ERROR: Policy violation (prompt bị cấm) ===
+                # Retry 1 lần, nếu vẫn 400 thì skip prompt này
+                if "400" in error:
+                    policy_retry_count = getattr(self, '_policy_retry_count', 0)
+                    if policy_retry_count < 1:
+                        self._policy_retry_count = policy_retry_count + 1
+                        self.log(f"⚠️ 400 Policy Violation - Prompt vi phạm! Retry lần {policy_retry_count + 1}...", "WARN")
+                        time.sleep(2)
+                        attempt += 1
+                        continue
+                    else:
+                        # Reset counter và skip prompt này
+                        self._policy_retry_count = 0
+                        self.log(f"⚠️ 400 Policy Violation - SKIP prompt này!", "WARN")
+                        return False, [], "POLICY_VIOLATION: Prompt bị cấm, skip"
+
                 # === 403 ERROR HANDLING ===
                 # Logic MỚI (cho 2 Chrome parallel):
                 # 1. 403 → Reset Chrome (2 lần)
@@ -3659,6 +3685,9 @@ class DrissionFlowAPI:
                 tracker.reset_worker(self.worker_id)
             except:
                 pass
+
+            # Reset policy violation counter on success
+            self._policy_retry_count = 0
 
         return True, images, None
 

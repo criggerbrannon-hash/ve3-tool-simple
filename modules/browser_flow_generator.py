@@ -3923,6 +3923,13 @@ class BrowserFlowGenerator:
                         except Exception as e:
                             self._log(f"✗ Restart error: {e}", "error")
 
+                    # Check for POLICY_VIOLATION - Skip prompt immediately (đã retry trong drission_flow_api)
+                    if error and "POLICY_VIOLATION" in str(error):
+                        self._log(f"⚠️ POLICY VIOLATION - Prompt vi phạm nội dung! SKIP {pid}", "warn")
+                        self.stats["skipped"] = self.stats.get("skipped", 0) + 1
+                        self.stats["failed"] -= 1  # Undo fail count (đã đánh dấu failed trước đó)
+                        continue  # Skip to next prompt
+
                     # Check for 400 - Invalid argument (reference image expired or invalid prompt)
                     if error and "400" in str(error):
                         self._log(f"⚠️ Lỗi 400 - Restart Chrome + retry không có reference...", "warn")
