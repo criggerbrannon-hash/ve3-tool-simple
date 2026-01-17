@@ -1251,6 +1251,63 @@ class VMManagerGUI:
                                                      font=("Consolas", 9))
         self.tasks_text.pack(fill="both", expand=True)
 
+        # Scenes tab - show all scenes for selected project
+        scenes_frame = ttk.Frame(self.logs_notebook, padding=5)
+        self.logs_notebook.add(scenes_frame, text="Scenes")
+
+        # Project selector
+        scene_selector_frame = ttk.Frame(scenes_frame)
+        scene_selector_frame.pack(fill="x", pady=(0, 5))
+
+        ttk.Label(scene_selector_frame, text="Project:").pack(side="left", padx=(0, 5))
+        self.scene_project_var = tk.StringVar(value="")
+        self.scene_project_combo = ttk.Combobox(scene_selector_frame, textvariable=self.scene_project_var,
+                                                  width=20, state="readonly")
+        self.scene_project_combo.pack(side="left", padx=(0, 10))
+        self.scene_project_combo.bind("<<ComboboxSelected>>", self._on_scene_project_change)
+
+        ttk.Button(scene_selector_frame, text="Refresh", command=self._refresh_scenes, width=10).pack(side="left")
+
+        # Scene summary
+        self.scene_summary_var = tk.StringVar(value="Select a project to view scenes")
+        ttk.Label(scene_selector_frame, textvariable=self.scene_summary_var).pack(side="right", padx=10)
+
+        # Scenes treeview
+        tree_frame = ttk.Frame(scenes_frame)
+        tree_frame.pack(fill="both", expand=True)
+
+        columns = ("scene", "subtitle", "prompt", "image", "video", "status")
+        self.scenes_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8)
+
+        # Column headings
+        self.scenes_tree.heading("scene", text="#")
+        self.scenes_tree.heading("subtitle", text="Subtitle")
+        self.scenes_tree.heading("prompt", text="Prompt")
+        self.scenes_tree.heading("image", text="Image")
+        self.scenes_tree.heading("video", text="Video")
+        self.scenes_tree.heading("status", text="Status")
+
+        # Column widths
+        self.scenes_tree.column("scene", width=40, anchor="center")
+        self.scenes_tree.column("subtitle", width=200)
+        self.scenes_tree.column("prompt", width=60, anchor="center")
+        self.scenes_tree.column("image", width=60, anchor="center")
+        self.scenes_tree.column("video", width=60, anchor="center")
+        self.scenes_tree.column("status", width=100)
+
+        # Scrollbars
+        y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.scenes_tree.yview)
+        self.scenes_tree.configure(yscrollcommand=y_scroll.set)
+
+        self.scenes_tree.pack(side="left", fill="both", expand=True)
+        y_scroll.pack(side="right", fill="y")
+
+        # Configure tags for row colors
+        self.scenes_tree.tag_configure("done", background="#90EE90")  # Light green
+        self.scenes_tree.tag_configure("working", background="#FFFF99")  # Light yellow
+        self.scenes_tree.tag_configure("pending", background="#FFFFFF")  # White
+        self.scenes_tree.tag_configure("no_prompt", background="#FFCCCC")  # Light red
+
         # Track last log positions for incremental updates
         self._last_log_positions = {}
 
@@ -1524,6 +1581,136 @@ class VMManagerGUI:
         self.worker_logs_text.configure(state="disabled")
 
     # ================================================================================
+    # Scenes Tab Handling
+    # ================================================================================
+
+    def _on_scene_project_change(self, event=None):
+        """Handle project selection change in scenes tab."""
+        self._refresh_scenes()
+
+    def _refresh_scenes(self):
+        """Refresh the scenes treeview for selected project."""
+        project_code = self.scene_project_var.get()
+        if not project_code:
+            self.scene_summary_var.set("Select a project to view scenes")
+            return
+
+        try:
+            from modules.excel_manager import PromptWorkbook
+            from pathlib import Path
+
+            project_dir = Path(__file__).parent / "PROJECTS" / project_code
+            excel_path = project_dir / f"{project_code}_prompts.xlsx"
+
+            if not excel_path.exists():
+                self.scene_summary_var.set(f"Excel not found: {project_code}")
+                return
+
+            wb = PromptWorkbook(str(excel_path))
+            scenes = wb.get_scenes()
+
+            # Clear existing
+            for item in self.scenes_tree.get_children():
+                self.scenes_tree.delete(item)
+
+            # Track stats
+            prompts_done = 0
+            images_done = 0
+            videos_done = 0
+
+            # Get current working scene from worker details
+            current_scenes = set()
+            if self.manager:
+                for wid, w in self.manager.workers.items():
+                    details = self.manager.get_worker_details(wid) or {}
+                    if details.get("current_project") == project_code:
+                        current_scene = details.get("current_scene", "")
+                        if current_scene:
+                            current_scenes.add(str(current_scene))
+
+            for scene in scenes:
+                # Status checks
+                has_prompt = "[v]" if scene.img_prompt else "-"
+                has_image = "[v]" if scene.img_local_path and Path(scene.img_local_path).exists() else "-"
+                has_video = "[v]" if scene.video_local_path and Path(scene.video_local_path).exists() else "-"
+
+                # Count stats
+                if scene.img_prompt:
+                    prompts_done += 1
+                if scene.img_local_path and Path(scene.img_local_path).exists():
+                    images_done += 1
+                if scene.video_local_path and Path(scene.video_local_path).exists():
+                    videos_done += 1
+
+                # Determine row status/tag
+                scene_num_str = str(scene.scene_number)
+                if scene_num_str in current_scenes:
+                    status = "WORKING"
+                    tag = "working"
+                elif has_image == "[v]" and has_video == "[v]":
+                    status = "Done"
+                    tag = "done"
+                elif has_image == "[v]":
+                    status = "Image OK"
+                    tag = "done"
+                elif has_prompt == "[v]":
+                    status = "Ready"
+                    tag = "pending"
+                else:
+                    status = "No prompt"
+                    tag = "no_prompt"
+
+                # Truncate subtitle
+                subtitle = (scene.subtitle or "")[:40]
+                if len(scene.subtitle or "") > 40:
+                    subtitle += "..."
+
+                self.scenes_tree.insert("", "end", values=(
+                    scene.scene_number,
+                    subtitle,
+                    has_prompt,
+                    has_image,
+                    has_video,
+                    status
+                ), tags=(tag,))
+
+            # Update summary
+            total = len(scenes)
+            self.scene_summary_var.set(
+                f"Total: {total} | Prompts: {prompts_done} | Images: {images_done} | Videos: {videos_done}"
+            )
+
+        except Exception as e:
+            self.scene_summary_var.set(f"Error: {str(e)[:50]}")
+
+    def _update_scene_project_list(self):
+        """Update the project list in scenes combo."""
+        if not self.manager:
+            return
+
+        try:
+            projects = list(self.manager.quality_checker.project_cache.keys())
+            if projects:
+                current = self.scene_project_var.get()
+                self.scene_project_combo["values"] = projects
+                if current not in projects and projects:
+                    self.scene_project_var.set(projects[0])
+        except:
+            pass
+
+    def _update_scenes_if_active(self):
+        """Auto-refresh scenes tab if it's the active tab."""
+        try:
+            # Check if Scenes tab is active (index 4)
+            current_tab = self.logs_notebook.index(self.logs_notebook.select())
+            if current_tab == 4:  # Scenes tab
+                project_code = self.scene_project_var.get()
+                if project_code:
+                    self._refresh_scenes()
+        except:
+            pass
+
+    # ================================================================================
     # Update Loop
     # ================================================================================
 
@@ -1536,6 +1723,8 @@ class VMManagerGUI:
         self._update_tasks()
         self._update_ipv6_status()
         self._update_worker_logs_incremental()
+        self._update_scene_project_list()  # Update scenes project combo
+        self._update_scenes_if_active()  # Auto-refresh scenes tab
 
         # Schedule next update - 500ms for real-time feel
         self.root.after(500, self._update_loop)
