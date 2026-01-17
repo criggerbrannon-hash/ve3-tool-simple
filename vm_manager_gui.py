@@ -951,18 +951,18 @@ class VMManagerGUI:
         # Start update loop - faster for real-time feel
         self._update_loop()
 
-        # Run update.py asynchronously after GUI is shown
+        # Run UPDATE.py asynchronously after GUI is shown
         self.root.after(100, self._run_update_async)
 
     def _run_update_async(self):
-        """Run update.py in background - disable buttons until done."""
+        """Run UPDATE.py in background - disable buttons until done."""
         # Disable buttons during update
         self._set_buttons_state("disabled")
         self._log("Updating... Please wait...")
         self.status_var.set("UPDATING - Please wait...")
 
         def run():
-            update_script = TOOL_DIR / "update.py"
+            update_script = TOOL_DIR / "UPDATE.py"
             success = True
             if update_script.exists():
                 try:
