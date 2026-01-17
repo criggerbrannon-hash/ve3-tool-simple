@@ -45,6 +45,43 @@ except ImportError:
 TOOL_DIR = Path(__file__).parent
 
 
+def startup_cleanup():
+    """Clean up logs and cache on startup."""
+    import shutil
+
+    print("[STARTUP] Cleaning up...")
+
+    # 1. Clear old log files
+    log_dir = TOOL_DIR / ".agent" / "logs"
+    if log_dir.exists():
+        for log_file in log_dir.glob("*.log"):
+            try:
+                log_file.unlink()
+                print(f"  Deleted: {log_file.name}")
+            except:
+                pass
+
+    # 2. Clear __pycache__ directories
+    cache_count = 0
+    for cache_dir in TOOL_DIR.rglob("__pycache__"):
+        try:
+            shutil.rmtree(cache_dir)
+            cache_count += 1
+        except:
+            pass
+    if cache_count:
+        print(f"  Cleared {cache_count} __pycache__ directories")
+
+    # 3. Kill any orphan Chrome/Python processes (optional, safer not to do by default)
+    # subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
+
+    print("[STARTUP] Cleanup complete!")
+
+
+# Run cleanup on import
+startup_cleanup()
+
+
 class SettingsDialog(tk.Toplevel):
     """Dialog cài đặt chi tiết."""
 
@@ -1108,6 +1145,9 @@ class VMManagerGUI:
         self.scan_btn = ttk.Button(row2, text="[Scan] Projects", command=self._scan_projects, width=15)
         self.scan_btn.pack(side="left", padx=5)
 
+        self.update_btn = ttk.Button(row2, text="[Update] Code", command=self._update_code, width=14)
+        self.update_btn.pack(side="left", padx=5)
+
         ttk.Separator(row2, orient="vertical").pack(side="left", fill="y", padx=10)
 
         # Chrome visibility toggle buttons
@@ -1473,6 +1513,48 @@ class VMManagerGUI:
             projects = self.manager.scan_projects()
             self._log(f"Found {len(projects)} projects")
             self._update_projects()
+
+    def _update_code(self):
+        """Update code from git and restart."""
+        import subprocess
+
+        # Confirm with user
+        if self.running:
+            if not messagebox.askyesno("Update", "Workers are running. Stop them and update?"):
+                return
+            self._stop_all()
+            time.sleep(2)
+
+        self._log("Updating code from git...")
+        self.update_btn.configure(state="disabled")
+
+        def do_update():
+            try:
+                # Run UPDATE.py
+                update_script = TOOL_DIR / "UPDATE.py"
+                if update_script.exists():
+                    result = subprocess.run(
+                        [sys.executable, str(update_script)],
+                        cwd=str(TOOL_DIR),
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    if result.returncode == 0:
+                        self._log("[OK] Update complete! Please restart the application.")
+                        messagebox.showinfo("Update", "Update complete!\n\nPlease close and restart vm_manager_gui.py")
+                    else:
+                        self._log(f"[ERROR] Update failed: {result.stderr[:200]}")
+                else:
+                    self._log("[ERROR] UPDATE.py not found")
+            except subprocess.TimeoutExpired:
+                self._log("[ERROR] Update timed out")
+            except Exception as e:
+                self._log(f"[ERROR] Update error: {e}")
+            finally:
+                self.update_btn.configure(state="normal")
+
+        threading.Thread(target=do_update, daemon=True).start()
 
     def _open_settings(self):
         """Open settings dialog."""
