@@ -16,6 +16,14 @@ Usage:
 
 import sys
 import os
+
+# Fix Windows encoding issues
+if sys.platform == "win32":
+    if sys.stdout:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if sys.stderr:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
 import time
 import shutil
 from pathlib import Path

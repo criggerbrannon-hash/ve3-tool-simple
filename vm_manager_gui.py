@@ -14,6 +14,18 @@ Usage:
     python vm_manager_gui.py
 """
 
+# Fix Windows encoding issues - must be before any other imports
+import sys
+import os
+if sys.platform == "win32":
+    # Force UTF-8 for stdout/stderr on Windows
+    if sys.stdout:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if sys.stderr:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    # Also set environment variable for subprocesses
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import threading
