@@ -642,8 +642,10 @@ def run_scan_loop_with_agent():
             cycle += 1
             print(f"\n[CYCLE {cycle}] Scanning...")
 
-            # Tìm projects cần xử lý
-            projects = scan_pending_projects()
+            # Tìm projects cần xử lý (từ local và master)
+            projects = scan_incomplete_local_projects()
+            if not projects:
+                projects = scan_master_projects()
 
             if projects:
                 for code in projects:

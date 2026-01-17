@@ -110,6 +110,8 @@ class WorkerInfo:
     completed_tasks: int = 0
     failed_tasks: int = 0
     last_error: str = ""
+    last_restart_time: Optional[datetime] = None  # Để track restart cooldown
+    restart_count: int = 0  # Số lần restart trong session
 
 
 @dataclass
@@ -548,7 +550,8 @@ class Dashboard:
             "║    tasks     - Show tasks  │ restart N    - Restart Chrome N             ║",
             "║    scan      - Scan new    │ scale N      - Scale to N Chrome            ║",
             "║    logs N    - Worker logs │ errors       - Show all errors              ║",
-            "║    set       - Settings    │ quit         - Exit                         ║",
+            "║    detail N  - Worker info │ set          - Settings                     ║",
+            "║    quit      - Exit                                                      ║",
             "╚═══════════════════════════════════════════════════════════════════════════╝",
         ]
 
@@ -660,8 +663,13 @@ class VMManager:
                 worker.completed_tasks = agent_status.completed_count
                 worker.failed_tasks = agent_status.failed_count
 
-    def check_worker_health(self) -> List[str]:
-        """Kiểm tra health của workers, trả về danh sách workers cần restart."""
+    def check_worker_health(self, cooldown_seconds: int = 120) -> List[str]:
+        """
+        Kiểm tra health của workers, trả về danh sách workers cần restart.
+
+        Args:
+            cooldown_seconds: Thời gian chờ tối thiểu giữa các lần restart (mặc định 120s)
+        """
         workers_to_restart = []
 
         if not self.agent_protocol:
@@ -671,17 +679,31 @@ class VMManager:
             if worker.status == WorkerStatus.STOPPED:
                 continue
 
-            # Check if worker is alive (updated status within last 30s)
+            # Check cooldown - không restart nếu vừa restart gần đây
+            if worker.last_restart_time:
+                elapsed = (datetime.now() - worker.last_restart_time).total_seconds()
+                if elapsed < cooldown_seconds:
+                    continue  # Skip, đang trong cooldown
+
+            # Check if worker is alive (updated status within last 60s)
             if not self.agent_protocol.is_worker_alive(worker_id, timeout_seconds=60):
                 self.log(f"{worker_id} không phản hồi (timeout 60s)", worker_id, "WARN")
                 workers_to_restart.append(worker_id)
                 continue
 
-            # Check for critical errors
+            # Check for critical errors - chỉ restart nếu error mới (sau lần restart cuối)
             agent_status = self.agent_protocol.get_worker_status(worker_id)
             if agent_status and agent_status.last_error_type:
                 error_type = agent_status.last_error_type
                 if error_type in ("chrome_crash", "chrome_403"):
+                    # Kiểm tra xem error này có phải sau lần restart cuối không
+                    try:
+                        error_time = datetime.fromisoformat(agent_status.last_update)
+                        if worker.last_restart_time and error_time < worker.last_restart_time:
+                            continue  # Error cũ, đã restart rồi
+                    except:
+                        pass
+
                     self.log(f"{worker_id} lỗi nghiêm trọng: {error_type}", worker_id, "ERROR")
                     workers_to_restart.append(worker_id)
 
@@ -932,10 +954,18 @@ class VMManager:
     def restart_worker(self, worker_id: str):
         self.log(f"Restarting {worker_id}...", worker_id, "WARN")
         self.stop_worker(worker_id)
-        if self.workers[worker_id].worker_type == "chrome":
+
+        w = self.workers[worker_id]
+        if w.worker_type == "chrome":
             self.kill_all_chrome()
+
         time.sleep(3)
         self.start_worker(worker_id)
+
+        # Track restart time và count
+        w.last_restart_time = datetime.now()
+        w.restart_count += 1
+        self.log(f"{worker_id} restarted (count: {w.restart_count})", worker_id, "SUCCESS")
 
     def start_all(self):
         self.kill_all_chrome()
@@ -1094,6 +1124,49 @@ class VMManager:
                             details = self.get_worker_details(wid)
                             if details and details.get("last_error"):
                                 print(f"    [{wid}] {details['last_error_type']}: {details['last_error'][:60]}")
+                    elif cmd.startswith("detail "):
+                        try:
+                            parts = cmd.split()
+                            if len(parts) >= 2:
+                                target = parts[1]
+                                if target.isdigit():
+                                    worker_id = f"chrome_{target}"
+                                elif target == "excel":
+                                    worker_id = "excel"
+                                else:
+                                    worker_id = target
+
+                                if worker_id in self.workers:
+                                    w = self.workers[worker_id]
+                                    details = self.get_worker_details(worker_id)
+
+                                    print(f"\n  WORKER DETAIL: {worker_id}")
+                                    print(f"  {'='*50}")
+                                    print(f"    Type:           {w.worker_type}")
+                                    print(f"    Status:         {w.status.value}")
+                                    print(f"    Completed:      {w.completed_tasks}")
+                                    print(f"    Failed:         {w.failed_tasks}")
+                                    print(f"    Restart count:  {w.restart_count}")
+
+                                    if w.last_restart_time:
+                                        elapsed = int((datetime.now() - w.last_restart_time).total_seconds())
+                                        print(f"    Last restart:   {elapsed}s ago")
+
+                                    if details:
+                                        print(f"\n    [From Agent Protocol]")
+                                        print(f"    State:          {details.get('state', '-')}")
+                                        print(f"    Progress:       {details.get('progress', 0)}%")
+                                        print(f"    Project:        {details.get('current_project', '-')}")
+                                        print(f"    Scene:          {details.get('current_scene', 0)}/{details.get('total_scenes', 0)}")
+                                        print(f"    Uptime:         {details.get('uptime_seconds', 0)}s")
+                                        if details.get('last_error'):
+                                            print(f"    Last error:     [{details.get('last_error_type')}] {details.get('last_error')[:50]}")
+                                else:
+                                    print(f"  Worker not found: {worker_id}")
+                        except Exception as e:
+                            print(f"  Error: {e}")
+                    elif cmd == "detail":
+                        print("\n  Usage: detail <worker>  (e.g., detail 1, detail excel)")
                     elif cmd == "set":
                         print(f"\n  SETTINGS:")
                         for k, v in self.settings.get_summary().items():
@@ -1101,7 +1174,7 @@ class VMManager:
                     elif cmd in ("quit", "exit", "q"):
                         break
                     else:
-                        print("  Commands: status, tasks, scan, restart, scale, logs, errors, set, quit")
+                        print("  Commands: status, tasks, scan, restart, scale, logs, errors, detail, set, quit")
 
                 except (EOFError, KeyboardInterrupt):
                     break
