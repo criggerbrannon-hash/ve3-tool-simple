@@ -855,8 +855,17 @@ class VMManagerGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("VM Manager - AI Agent Dashboard")
-        self.root.geometry("1400x900")
-        self.root.minsize(1200, 700)
+
+        # Get screen size and set window size (leave space for Chrome on right)
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+
+        # GUI takes left 60% of screen, Chrome windows on right 40%
+        gui_width = min(int(screen_width * 0.6), 1200)
+        gui_height = min(screen_height - 100, 900)
+
+        self.root.geometry(f"{gui_width}x{gui_height}+0+0")  # Position at top-left
+        self.root.minsize(1000, 700)
 
         # Manager
         self.manager: Optional[VMManager] = None
@@ -983,35 +992,35 @@ class VMManagerGUI:
         row2 = ttk.Frame(frame)
         row2.pack(fill="x", pady=5)
 
-        self.start_btn = ttk.Button(row2, text="▶ Start All", command=self._start_all, width=15)
+        self.start_btn = ttk.Button(row2, text="[>] Start All", command=self._start_all, width=15)
         self.start_btn.pack(side="left", padx=5)
 
-        self.stop_btn = ttk.Button(row2, text="⏹ Stop All", command=self._stop_all, width=15)
+        self.stop_btn = ttk.Button(row2, text="[X] Stop All", command=self._stop_all, width=15)
         self.stop_btn.pack(side="left", padx=5)
 
-        self.restart_btn = ttk.Button(row2, text="🔄 Restart All", command=self._restart_all, width=15)
+        self.restart_btn = ttk.Button(row2, text="[R] Restart All", command=self._restart_all, width=15)
         self.restart_btn.pack(side="left", padx=5)
 
         ttk.Separator(row2, orient="vertical").pack(side="left", fill="y", padx=10)
 
-        self.ipv6_btn = ttk.Button(row2, text="🌐 Rotate IPv6", command=self._rotate_ipv6, width=15)
+        self.ipv6_btn = ttk.Button(row2, text="[IPv6] Rotate", command=self._rotate_ipv6, width=15)
         self.ipv6_btn.pack(side="left", padx=5)
 
-        self.scan_btn = ttk.Button(row2, text="🔍 Scan Projects", command=self._scan_projects, width=15)
+        self.scan_btn = ttk.Button(row2, text="[Scan] Projects", command=self._scan_projects, width=15)
         self.scan_btn.pack(side="left", padx=5)
 
         ttk.Separator(row2, orient="vertical").pack(side="left", fill="y", padx=10)
 
         # Chrome visibility toggle buttons
-        self.hide_chrome_btn = ttk.Button(row2, text="👁 Hide Chrome", command=self._hide_chrome, width=14)
+        self.hide_chrome_btn = ttk.Button(row2, text="[Hide] Chrome", command=self._hide_chrome, width=14)
         self.hide_chrome_btn.pack(side="left", padx=5)
 
-        self.show_chrome_btn = ttk.Button(row2, text="👁 Show Chrome", command=self._show_chrome, width=14)
+        self.show_chrome_btn = ttk.Button(row2, text="[Show] Chrome", command=self._show_chrome, width=14)
         self.show_chrome_btn.pack(side="left", padx=5)
 
         ttk.Separator(row2, orient="vertical").pack(side="left", fill="y", padx=10)
 
-        self.settings_btn = ttk.Button(row2, text="⚙️ Settings", command=self._open_settings, width=12)
+        self.settings_btn = ttk.Button(row2, text="[Settings]", command=self._open_settings, width=12)
         self.settings_btn.pack(side="left", padx=5)
 
     def _build_workers_frame(self, parent):

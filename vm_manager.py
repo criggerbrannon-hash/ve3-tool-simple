@@ -1451,7 +1451,7 @@ class VMManager:
 
     def show_chrome_windows(self):
         """
-        Hiện các cửa sổ Chrome bằng cách di chuyển vào màn hình.
+        Hiện các cửa sổ Chrome - đặt bên phải màn hình, size nhỏ.
         """
         if sys.platform != "win32":
             self.log("Window showing only supported on Windows", "CHROME", "WARN")
@@ -1466,16 +1466,31 @@ class VMManager:
                 self.log("No Chrome windows found", "CHROME", "WARN")
                 return False
 
-            # Di chuyển các cửa sổ Chrome vào màn hình với cascade effect
-            x_offset = 50
-            y_offset = 50
-            for i, hwnd in enumerate(chrome_windows):
-                x = 100 + (i * x_offset)
-                y = 100 + (i * y_offset)
-                # SWP_NOSIZE = 0x0001, SWP_NOZORDER = 0x0004
-                user32.SetWindowPos(hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004)
+            # Get screen size
+            screen_width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+            screen_height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
 
-            self.log(f"Shown {len(chrome_windows)} Chrome windows", "CHROME", "SUCCESS")
+            # Chrome window size (small, on right side)
+            chrome_width = 500
+            chrome_height = 400
+
+            # Position on right side, stacked vertically
+            x_start = screen_width - chrome_width - 10  # 10px from right edge
+            y_start = 50
+
+            for i, hwnd in enumerate(chrome_windows):
+                x = x_start
+                y = y_start + (i * (chrome_height + 10))  # Stack vertically with 10px gap
+
+                # Make sure it doesn't go off screen
+                if y + chrome_height > screen_height:
+                    y = y_start
+
+                # SWP_NOZORDER = 0x0004 (don't change z-order)
+                # Move and resize
+                user32.SetWindowPos(hwnd, 0, x, y, chrome_width, chrome_height, 0x0004)
+
+            self.log(f"Shown {len(chrome_windows)} Chrome windows (right side)", "CHROME", "SUCCESS")
             return True
         except Exception as e:
             self.log(f"Error showing Chrome windows: {e}", "CHROME", "ERROR")
