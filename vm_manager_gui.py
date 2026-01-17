@@ -1748,6 +1748,7 @@ class VMManagerGUI:
 
             project_dir = Path(__file__).parent / "PROJECTS" / project_code
             excel_path = project_dir / f"{project_code}_prompts.xlsx"
+            img_dir = project_dir / "img"
 
             if not excel_path.exists():
                 self.scene_summary_var.set(f"Excel not found: {project_code}")
@@ -1765,6 +1766,10 @@ class VMManagerGUI:
             images_done = 0
             videos_done = 0
 
+            # Count prompts for odd/even (Chrome 1 = odd, Chrome 2 = even)
+            chrome1_prompts = 0  # Odd scenes
+            chrome2_prompts = 0  # Even scenes
+
             # Get current working scene from worker details
             current_scenes = set()
             if self.manager:
@@ -1776,21 +1781,37 @@ class VMManagerGUI:
                             current_scenes.add(str(current_scene))
 
             for scene in scenes:
+                scene_id = scene.scene_id
+
+                # Check actual files in img/ folder instead of Excel path
+                img_file = img_dir / f"{scene_id}.png"
+                img_file_jpg = img_dir / f"{scene_id}.jpg"
+                video_file = img_dir / f"{scene_id}.mp4"
+
+                img_exists = img_file.exists() or img_file_jpg.exists()
+                video_exists = video_file.exists()
+
                 # Status checks
                 has_prompt = "[v]" if scene.img_prompt else "-"
-                has_image = "[v]" if scene.img_path and Path(scene.img_path).exists() else "-"
-                has_video = "[v]" if scene.video_path and Path(scene.video_path).exists() else "-"
+                has_image = "[v]" if img_exists else "-"
+                has_video = "[v]" if video_exists else "-"
 
                 # Count stats
                 if scene.img_prompt:
                     prompts_done += 1
-                if scene.img_path and Path(scene.img_path).exists():
+                    # Count by worker (odd = Chrome 1, even = Chrome 2)
+                    if scene_id % 2 == 1:
+                        chrome1_prompts += 1
+                    else:
+                        chrome2_prompts += 1
+
+                if img_exists:
                     images_done += 1
-                if scene.video_path and Path(scene.video_path).exists():
+                if video_exists:
                     videos_done += 1
 
                 # Determine row status/tag
-                scene_num_str = str(scene.scene_id)
+                scene_num_str = str(scene_id)
                 if scene_num_str in current_scenes:
                     status = "WORKING"
                     tag = "working"
@@ -1813,7 +1834,7 @@ class VMManagerGUI:
                     subtitle += "..."
 
                 self.scenes_tree.insert("", "end", values=(
-                    scene.scene_id,
+                    scene_id,
                     subtitle,
                     has_prompt,
                     has_image,
@@ -1821,10 +1842,11 @@ class VMManagerGUI:
                     status
                 ), tags=(tag,))
 
-            # Update summary
+            # Update summary with worker split info
             total = len(scenes)
             self.scene_summary_var.set(
-                f"Total: {total} | Prompts: {prompts_done} | Images: {images_done} | Videos: {videos_done}"
+                f"Total: {total} | Prompts: {prompts_done} | Images: {images_done} | Videos: {videos_done} | "
+                f"C1(odd): {chrome1_prompts} | C2(even): {chrome2_prompts}"
             )
 
         except Exception as e:
@@ -2079,10 +2101,30 @@ class VMManagerGUI:
                 try:
                     # Get project status from quality checker
                     status = self.manager.quality_checker.get_project_status(project_code)
-                    images_done = status.images_done
-                    images_total = status.total_scenes
-                    videos_done = status.videos_done
-                    videos_total = status.total_scenes
+
+                    # Calculate correct counts based on worker type
+                    # Chrome 1 = odd scenes (1,3,5...), Chrome 2 = even scenes (2,4,6...)
+                    if wid == "chrome_1":
+                        # Count only odd scenes
+                        worker_total = (status.total_scenes + 1) // 2  # Odd count
+                        worker_images = len([s for s in status.images_missing if s % 2 == 0])  # Missing even = done odd
+                        images_total = worker_total
+                        images_done = worker_total - len([s for s in status.images_missing if s % 2 == 1])
+                        videos_total = worker_total
+                        videos_done = worker_total - len([s for s in status.videos_missing if s % 2 == 1])
+                    elif wid == "chrome_2":
+                        # Count only even scenes
+                        worker_total = status.total_scenes // 2  # Even count
+                        images_total = worker_total
+                        images_done = worker_total - len([s for s in status.images_missing if s % 2 == 0])
+                        videos_total = worker_total
+                        videos_done = worker_total - len([s for s in status.videos_missing if s % 2 == 0])
+                    else:
+                        # Excel or other workers - show total
+                        images_done = status.images_done
+                        images_total = status.total_scenes
+                        videos_done = status.videos_done
+                        videos_total = status.total_scenes
 
                     # Current task from details
                     current_scene = details.get("current_scene", 0)
