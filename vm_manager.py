@@ -344,10 +344,11 @@ class QualityChecker:
                 status.excel_status = "complete"
                 status.current_step = "image"
 
-            # Check images
+            # Check images - use actual img/{scene_id}.png path
+            img_dir = project_dir / "img"
             for scene in scenes:
-                scene_img_path = scene.img_path
-                if scene_img_path and Path(scene_img_path).exists():
+                actual_img = img_dir / f"{scene.scene_id}.png"
+                if actual_img.exists():
                     status.images_done += 1
                 else:
                     status.images_missing.append(scene.scene_id)
@@ -358,10 +359,11 @@ class QualityChecker:
                 else:
                     status.current_step = "image"
 
-            # Check videos
+            # Check videos - use actual video/{scene_id}.mp4 path
+            video_dir = project_dir / "video"
             for scene in scenes:
-                scene_video_path = scene.video_path
-                if scene_video_path and Path(scene_video_path).exists():
+                actual_vid = video_dir / f"{scene.scene_id}.mp4"
+                if actual_vid.exists():
                     status.videos_done += 1
                 else:
                     status.videos_missing.append(scene.scene_id)
@@ -1561,8 +1563,9 @@ class VMManager:
     def show_chrome_with_cmd(self):
         """
         Show Chrome và CMD windows cạnh nhau.
-        Layout: [Chrome 1][CMD 1]
-                [Chrome 2][CMD 2]
+        Layout: [CMD 1][Chrome 1]
+                [CMD 2][Chrome 2]
+        CMD bên trái, Chrome bên phải (cùng hàng)
         """
         if sys.platform != "win32":
             self.log("Window showing only supported on Windows", "CHROME", "WARN")
@@ -1580,26 +1583,17 @@ class VMManager:
             screen_height = user32.GetSystemMetrics(1)
 
             # Sizes
+            cmd_width = 490
+            cmd_height = 450
             chrome_width = 500
             chrome_height = 450
-            cmd_width = 500
-            cmd_height = 450
 
-            # Position from right side
-            x_chrome = screen_width - chrome_width - cmd_width - 20
-            x_cmd = screen_width - cmd_width - 10
+            # Position from right side: [CMD][Chrome]
+            x_cmd = screen_width - cmd_width - chrome_width - 20  # CMD bên trái
+            x_chrome = screen_width - chrome_width - 10  # Chrome bên phải
             y_start = 50
 
-            # Position Chrome windows
-            for i, hwnd in enumerate(chrome_windows):
-                y = y_start + (i * (chrome_height + 10))
-                if y + chrome_height > screen_height:
-                    y = y_start
-                user32.SetWindowPos(hwnd, 0, x_chrome, y, chrome_width, chrome_height, 0x0004)
-                # Restore if minimized
-                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-
-            # Position CMD windows next to Chrome
+            # Position CMD windows (bên trái)
             for i, hwnd in enumerate(cmd_windows):
                 y = y_start + (i * (cmd_height + 10))
                 if y + cmd_height > screen_height:
@@ -1608,7 +1602,16 @@ class VMManager:
                 # Restore if minimized
                 user32.ShowWindow(hwnd, 9)  # SW_RESTORE
 
-            self.log(f"Shown {len(chrome_windows)} Chrome + {len(cmd_windows)} CMD windows (side by side)", "CHROME", "SUCCESS")
+            # Position Chrome windows (bên phải, cùng hàng với CMD)
+            for i, hwnd in enumerate(chrome_windows):
+                y = y_start + (i * (chrome_height + 10))
+                if y + chrome_height > screen_height:
+                    y = y_start
+                user32.SetWindowPos(hwnd, 0, x_chrome, y, chrome_width, chrome_height, 0x0004)
+                # Restore if minimized
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+            self.log(f"Shown {len(cmd_windows)} CMD + {len(chrome_windows)} Chrome windows (side by side)", "CHROME", "SUCCESS")
             return True
         except Exception as e:
             self.log(f"Error showing Chrome with CMD: {e}", "CHROME", "ERROR")

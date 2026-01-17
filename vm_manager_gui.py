@@ -379,14 +379,16 @@ class SettingsDialog(tk.Toplevel):
 class ProjectDetailDialog(tk.Toplevel):
     """Dialog hiển thị chi tiết project với prompts và images."""
 
-    def __init__(self, parent, project_code: str, quality_checker):
+    def __init__(self, parent, project_code: str, quality_checker, manager=None):
         super().__init__(parent)
         self.title(f"Project: {project_code}")
-        self.geometry("1000x700")
+        self.geometry("1200x800")
 
         self.project_code = project_code
         self.quality_checker = quality_checker
+        self.manager = manager  # For getting worker status
         self._image_cache = {}  # Cache for loaded images
+        self._ref_images = []  # Keep references to prevent GC
 
         # Make modal
         self.transient(parent)
@@ -398,100 +400,128 @@ class ProjectDetailDialog(tk.Toplevel):
         self._auto_refresh()
 
     def _build_ui(self):
-        # Main container with panes
-        paned = ttk.PanedWindow(self, orient="horizontal")
-        paned.pack(fill="both", expand=True, padx=10, pady=10)
+        # ===== TOP: Worker Status Bar =====
+        status_frame = ttk.LabelFrame(self, text="Worker Status", padding=5)
+        status_frame.pack(fill="x", padx=10, pady=(10, 5))
+
+        # Chrome 1 status
+        c1_frame = ttk.Frame(status_frame)
+        c1_frame.pack(fill="x", pady=2)
+        ttk.Label(c1_frame, text="Chrome 1 (odd):", width=15, font=("Arial", 9, "bold")).pack(side="left")
+        self.chrome1_status_var = tk.StringVar(value="idle")
+        ttk.Label(c1_frame, textvariable=self.chrome1_status_var, width=60).pack(side="left")
+
+        # Chrome 2 status
+        c2_frame = ttk.Frame(status_frame)
+        c2_frame.pack(fill="x", pady=2)
+        ttk.Label(c2_frame, text="Chrome 2 (even):", width=15, font=("Arial", 9, "bold")).pack(side="left")
+        self.chrome2_status_var = tk.StringVar(value="idle")
+        ttk.Label(c2_frame, textvariable=self.chrome2_status_var, width=60).pack(side="left")
+
+        # ===== MAIN: Notebook with tabs =====
+        main_notebook = ttk.Notebook(self)
+        main_notebook.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # ----- Tab 1: Scenes Overview -----
+        scenes_tab = ttk.Frame(main_notebook, padding=5)
+        main_notebook.add(scenes_tab, text="Scenes")
+
+        scenes_paned = ttk.PanedWindow(scenes_tab, orient="horizontal")
+        scenes_paned.pack(fill="both", expand=True)
 
         # Left: Scene list
-        left_frame = ttk.Frame(paned)
-        paned.add(left_frame, weight=1)
+        left_frame = ttk.Frame(scenes_paned)
+        scenes_paned.add(left_frame, weight=1)
 
-        ttk.Label(left_frame, text="Scenes", font=("Arial", 11, "bold")).pack(anchor="w")
+        ttk.Label(left_frame, text="All Scenes", font=("Arial", 10, "bold")).pack(anchor="w")
 
-        # Scene listbox with scrollbar
         list_frame = ttk.Frame(left_frame)
         list_frame.pack(fill="both", expand=True, pady=5)
 
-        self.scene_listbox = tk.Listbox(list_frame, font=("Consolas", 10), selectmode="single")
+        self.scene_listbox = tk.Listbox(list_frame, font=("Consolas", 9), selectmode="single")
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.scene_listbox.yview)
         self.scene_listbox.configure(yscrollcommand=scrollbar.set)
-
         scrollbar.pack(side="right", fill="y")
         self.scene_listbox.pack(side="left", fill="both", expand=True)
-
         self.scene_listbox.bind("<<ListboxSelect>>", self._on_scene_select)
 
-        # Status summary
+        # Summary
         self.summary_var = tk.StringVar(value="Loading...")
-        ttk.Label(left_frame, textvariable=self.summary_var, wraplength=250).pack(anchor="w", pady=5)
+        ttk.Label(left_frame, textvariable=self.summary_var, font=("Consolas", 9)).pack(anchor="w", pady=5)
 
-        # Right: Detail view
-        right_frame = ttk.Frame(paned)
-        paned.add(right_frame, weight=2)
+        # Right: Detail + Preview
+        right_frame = ttk.Frame(scenes_paned)
+        scenes_paned.add(right_frame, weight=2)
 
         # Scene info
-        info_frame = ttk.LabelFrame(right_frame, text="Scene Details", padding=10)
-        info_frame.pack(fill="x", pady=(0, 10))
+        info_frame = ttk.LabelFrame(right_frame, text="Scene Details", padding=5)
+        info_frame.pack(fill="x", pady=(0, 5))
 
-        # Scene number
         row = ttk.Frame(info_frame)
         row.pack(fill="x")
-        ttk.Label(row, text="Scene:", width=12).pack(side="left")
+        ttk.Label(row, text="Scene:", width=10).pack(side="left")
         self.scene_num_var = tk.StringVar(value="-")
         ttk.Label(row, textvariable=self.scene_num_var, font=("Arial", 10, "bold")).pack(side="left")
-
-        # Timing
-        row = ttk.Frame(info_frame)
-        row.pack(fill="x")
-        ttk.Label(row, text="Timing:", width=12).pack(side="left")
+        ttk.Label(row, text="  Timing:").pack(side="left", padx=(20, 0))
         self.timing_var = tk.StringVar(value="-")
         ttk.Label(row, textvariable=self.timing_var).pack(side="left")
 
-        # Subtitle
         row = ttk.Frame(info_frame)
         row.pack(fill="x")
-        ttk.Label(row, text="Subtitle:", width=12).pack(side="left")
+        ttk.Label(row, text="Subtitle:", width=10).pack(side="left")
         self.subtitle_var = tk.StringVar(value="-")
-        ttk.Label(row, textvariable=self.subtitle_var, wraplength=400).pack(side="left")
+        ttk.Label(row, textvariable=self.subtitle_var, wraplength=500).pack(side="left")
 
-        # Prompts notebook
-        prompts_notebook = ttk.Notebook(right_frame)
-        prompts_notebook.pack(fill="both", expand=True)
-
-        # Image prompt tab
-        img_prompt_frame = ttk.Frame(prompts_notebook, padding=5)
-        prompts_notebook.add(img_prompt_frame, text="Image Prompt")
-
-        self.img_prompt_text = scrolledtext.ScrolledText(img_prompt_frame, height=6, font=("Consolas", 9),
+        # Prompt text
+        prompt_frame = ttk.LabelFrame(right_frame, text="Image Prompt", padding=5)
+        prompt_frame.pack(fill="x", pady=5)
+        self.img_prompt_text = scrolledtext.ScrolledText(prompt_frame, height=4, font=("Consolas", 8),
                                                           wrap="word", state="disabled")
         self.img_prompt_text.pack(fill="both", expand=True)
 
-        # Video prompt tab
-        vid_prompt_frame = ttk.Frame(prompts_notebook, padding=5)
-        prompts_notebook.add(vid_prompt_frame, text="Video Prompt")
-
-        self.vid_prompt_text = scrolledtext.ScrolledText(vid_prompt_frame, height=6, font=("Consolas", 9),
-                                                          wrap="word", state="disabled")
-        self.vid_prompt_text.pack(fill="both", expand=True)
-
-        # Image/Video preview frame
-        preview_frame = ttk.LabelFrame(right_frame, text="Preview", padding=10)
-        preview_frame.pack(fill="both", expand=True, pady=(10, 0))
-
-        # Image preview
-        self.image_label = ttk.Label(preview_frame, text="No image", anchor="center")
+        # Preview
+        preview_frame = ttk.LabelFrame(right_frame, text="Preview", padding=5)
+        preview_frame.pack(fill="both", expand=True)
+        self.image_label = ttk.Label(preview_frame, text="Select a scene", anchor="center")
         self.image_label.pack(fill="both", expand=True)
-
-        # Status label
         self.preview_status_var = tk.StringVar(value="")
         ttk.Label(preview_frame, textvariable=self.preview_status_var).pack(anchor="w")
 
-        # Bottom buttons
+        # ----- Tab 2: References (nv/) -----
+        refs_tab = ttk.Frame(main_notebook, padding=5)
+        main_notebook.add(refs_tab, text="References (nv/)")
+
+        # Canvas for thumbnails
+        refs_canvas_frame = ttk.Frame(refs_tab)
+        refs_canvas_frame.pack(fill="both", expand=True)
+
+        self.refs_canvas = tk.Canvas(refs_canvas_frame, bg="white")
+        refs_scrollbar = ttk.Scrollbar(refs_canvas_frame, orient="vertical", command=self.refs_canvas.yview)
+        self.refs_inner = ttk.Frame(self.refs_canvas)
+
+        self.refs_canvas.configure(yscrollcommand=refs_scrollbar.set)
+        refs_scrollbar.pack(side="right", fill="y")
+        self.refs_canvas.pack(side="left", fill="both", expand=True)
+        self.refs_canvas.create_window((0, 0), window=self.refs_inner, anchor="nw")
+        self.refs_inner.bind("<Configure>", lambda e: self.refs_canvas.configure(scrollregion=self.refs_canvas.bbox("all")))
+
+        # ----- Tab 3: Failed/Skipped -----
+        failed_tab = ttk.Frame(main_notebook, padding=5)
+        main_notebook.add(failed_tab, text="Failed/Skipped")
+
+        self.failed_text = scrolledtext.ScrolledText(failed_tab, font=("Consolas", 9), state="disabled")
+        self.failed_text.pack(fill="both", expand=True)
+
+        # Hidden video prompt (keep for compatibility)
+        self.vid_prompt_text = scrolledtext.ScrolledText(right_frame, height=1)
+
+        # ===== BOTTOM: Buttons =====
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", padx=10, pady=10)
 
         ttk.Button(btn_frame, text="Refresh", command=self._load_data).pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="Open Folder", command=self._open_folder).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Open IMG Folder", command=self._open_folder).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Open NV Folder", command=self._open_nv_folder).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side="right", padx=5)
 
     def _load_data(self):
@@ -500,6 +530,7 @@ class ProjectDetailDialog(tk.Toplevel):
             from modules.excel_manager import PromptWorkbook
 
             project_dir = Path(__file__).parent / "PROJECTS" / self.project_code
+            img_dir = project_dir / "img"
             excel_path = project_dir / f"{self.project_code}_prompts.xlsx"
 
             if not excel_path.exists():
@@ -512,16 +543,19 @@ class ProjectDetailDialog(tk.Toplevel):
             # Update listbox
             self.scene_listbox.delete(0, "end")
             for scene in self.scenes:
-                # Status icons
-                img_icon = "[v]" if scene.img_path and Path(scene.img_path).exists() else "○"
+                scene_id = scene.scene_id
+                # Check actual files in img/ folder
+                actual_img = img_dir / f"{scene_id}.png"
+                img_exists = actual_img.exists()
                 vid_icon = "[v]" if scene.video_path and Path(scene.video_path).exists() else "○"
                 prompt_icon = "[v]" if scene.img_prompt else "○"
+                img_icon = "[v]" if img_exists else "○"
 
                 self.scene_listbox.insert("end",
-                    f"Scene {scene.scene_id:03d} │ P:{prompt_icon} I:{img_icon} V:{vid_icon}")
+                    f"Scene {scene_id:03d} │ P:{prompt_icon} I:{img_icon} V:{vid_icon}")
 
                 # Color based on status
-                if scene.img_path and Path(scene.img_path).exists():
+                if img_exists:
                     self.scene_listbox.itemconfig("end", fg="green")
                 elif not scene.img_prompt:
                     self.scene_listbox.itemconfig("end", fg="red")
@@ -535,6 +569,16 @@ class ProjectDetailDialog(tk.Toplevel):
                 f"Videos: {status.videos_done}/{status.total_scenes}\n"
                 f"Status: {status.excel_status}"
             )
+
+            # Update worker status
+            self._update_worker_status()
+
+            # Load failed/skipped
+            self._load_failed_skipped()
+
+            # Load references only on first load
+            if not self._ref_images:
+                self._load_references()
 
         except Exception as e:
             self.summary_var.set(f"Error: {str(e)[:50]}")
@@ -572,18 +616,21 @@ class ProjectDetailDialog(tk.Toplevel):
 
     def _load_image_preview(self, scene):
         """Load and display image preview."""
-        img_path = scene.img_path
+        # Check actual img/{scene_id}.png path
+        img_dir = Path(__file__).parent / "PROJECTS" / self.project_code / "img"
+        img_path = img_dir / f"{scene.scene_id}.png"
 
-        if not img_path or not Path(img_path).exists():
+        if not img_path.exists():
             self.image_label.configure(image="", text="No image generated")
             self.preview_status_var.set("")
             return
 
+        img_path_str = str(img_path)
         try:
             # Check cache
-            if img_path in self._image_cache:
-                self.image_label.configure(image=self._image_cache[img_path], text="")
-                self.preview_status_var.set(f"Image: {Path(img_path).name}")
+            if img_path_str in self._image_cache:
+                self.image_label.configure(image=self._image_cache[img_path_str], text="")
+                self.preview_status_var.set(f"Image: {img_path.name}")
                 return
 
             # Load and resize image
@@ -598,13 +645,13 @@ class ProjectDetailDialog(tk.Toplevel):
             photo = ImageTk.PhotoImage(img)
 
             # Cache and display
-            self._image_cache[img_path] = photo
+            self._image_cache[img_path_str] = photo
             self.image_label.configure(image=photo, text="")
-            self.preview_status_var.set(f"Image: {Path(img_path).name}")
+            self.preview_status_var.set(f"Image: {img_path.name}")
 
         except ImportError:
             self.image_label.configure(image="", text="PIL not installed\n(pip install Pillow)")
-            self.preview_status_var.set(img_path)
+            self.preview_status_var.set(str(img_path))
         except Exception as e:
             self.image_label.configure(image="", text=f"Error: {str(e)[:30]}")
             self.preview_status_var.set("")
@@ -628,6 +675,130 @@ class ProjectDetailDialog(tk.Toplevel):
         if self.winfo_exists():
             self._load_data()
             self.after(5000, self._auto_refresh)
+
+    def _open_nv_folder(self):
+        """Open nv/ folder in file explorer."""
+        import subprocess
+        nv_dir = Path(__file__).parent / "PROJECTS" / self.project_code / "nv"
+        if not nv_dir.exists():
+            nv_dir.mkdir(parents=True, exist_ok=True)
+
+        if sys.platform == "win32":
+            subprocess.run(["explorer", str(nv_dir)])
+        else:
+            subprocess.run(["xdg-open", str(nv_dir)])
+
+    def _load_references(self):
+        """Load reference images from nv/ folder."""
+        # Clear existing
+        for widget in self.refs_inner.winfo_children():
+            widget.destroy()
+        self._ref_images.clear()
+
+        nv_dir = Path(__file__).parent / "PROJECTS" / self.project_code / "nv"
+        if not nv_dir.exists():
+            ttk.Label(self.refs_inner, text="No nv/ folder found").grid(row=0, column=0, pady=20)
+            return
+
+        # Find all images
+        images = list(nv_dir.glob("*.png")) + list(nv_dir.glob("*.jpg")) + list(nv_dir.glob("*.jpeg"))
+        if not images:
+            ttk.Label(self.refs_inner, text="No reference images in nv/ folder").grid(row=0, column=0, pady=20)
+            return
+
+        try:
+            from PIL import Image, ImageTk
+
+            cols = 4
+            thumb_size = (150, 150)
+
+            for idx, img_path in enumerate(sorted(images)):
+                row = idx // cols
+                col = idx % cols
+
+                # Create thumbnail frame
+                frame = ttk.Frame(self.refs_inner, padding=5)
+                frame.grid(row=row, column=col, padx=5, pady=5)
+
+                try:
+                    img = Image.open(img_path)
+                    img.thumbnail(thumb_size, Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._ref_images.append(photo)  # Keep reference
+
+                    lbl = ttk.Label(frame, image=photo)
+                    lbl.pack()
+                    ttk.Label(frame, text=img_path.name, font=("Arial", 8), wraplength=140).pack()
+                except Exception as e:
+                    ttk.Label(frame, text=f"Error: {img_path.name}").pack()
+
+        except ImportError:
+            ttk.Label(self.refs_inner, text="PIL not installed (pip install Pillow)").grid(row=0, column=0, pady=20)
+
+    def _load_failed_skipped(self):
+        """Load failed/skipped scenes from log."""
+        self.failed_text.configure(state="normal")
+        self.failed_text.delete("1.0", "end")
+
+        # Check for scenes without prompts or failed
+        failed_info = []
+
+        if hasattr(self, 'scenes') and self.scenes:
+            for scene in self.scenes:
+                scene_id = scene.scene_id
+                img_path = Path(__file__).parent / "PROJECTS" / self.project_code / "img" / f"{scene_id}.png"
+
+                if not scene.img_prompt:
+                    failed_info.append(f"Scene {scene_id:03d}: MISSING PROMPT")
+                elif not img_path.exists():
+                    # Check if it was skipped or failed
+                    failed_info.append(f"Scene {scene_id:03d}: Not generated yet")
+
+        if failed_info:
+            self.failed_text.insert("1.0", "\n".join(failed_info))
+        else:
+            self.failed_text.insert("1.0", "No failed or skipped scenes!")
+
+        self.failed_text.configure(state="disabled")
+
+    def _update_worker_status(self):
+        """Update Chrome 1/2 status from manager."""
+        if not self.manager:
+            self.chrome1_status_var.set("(No manager)")
+            self.chrome2_status_var.set("(No manager)")
+            return
+
+        try:
+            # Get status from manager
+            chrome1_status = "idle"
+            chrome2_status = "idle"
+
+            # Check logs for current work
+            log_path = Path(__file__).parent / "chrome_log.txt"
+            if log_path.exists():
+                try:
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()[-50:]  # Last 50 lines
+
+                    for line in reversed(lines):
+                        if "[Chrome1]" in line or "[Worker1]" in line:
+                            if "Scene" in line or "scene" in line:
+                                # Extract scene info
+                                chrome1_status = line.strip()[-80:]
+                                break
+                        if "[Chrome2]" in line or "[Worker2]" in line:
+                            if "Scene" in line or "scene" in line:
+                                chrome2_status = line.strip()[-80:]
+                                break
+                except:
+                    pass
+
+            self.chrome1_status_var.set(chrome1_status)
+            self.chrome2_status_var.set(chrome2_status)
+
+        except Exception as e:
+            self.chrome1_status_var.set(f"Error: {str(e)[:30]}")
+            self.chrome2_status_var.set("")
 
 
 class WorkerCard(ttk.LabelFrame):
