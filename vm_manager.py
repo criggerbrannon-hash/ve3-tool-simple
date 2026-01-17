@@ -1,41 +1,49 @@
 #!/usr/bin/env python3
 """
-VM Manager - Quản lý các Chrome workers trên máy ảo.
+VM Manager - AI Agent System for Chrome Workers
+================================================
 
-=============================================================
-  VM MANAGER - Central Control for Chrome Workers
-=============================================================
+Hệ thống AI Agent điều phối công việc trên máy ảo:
+1. Excel Worker (1 process) - Tạo Excel tuần tự
+2. Chrome Workers (N processes) - Tạo ảnh/video song song
 
-Features:
-1. Mở/đóng/restart các CMD Chrome workers
-2. Giám sát output - phát hiện lỗi tự động
-3. Kill Chrome processes trước khi restart (giống làm thủ công)
-4. Có thể chạy Excel API riêng
+Flow:
+  Manager quét projects
+    ↓
+  Thêm vào Task Queue: [excel] → [image] → [video]
+    ↓
+  Excel Worker xử lý tuần tự: mã 1 → mã 2 → mã 3...
+    ↓
+  Chrome Workers xử lý song song: ảnh + video
 
 Usage:
-    python vm_manager.py              # Chạy với 2 Chrome workers
-    python vm_manager.py --workers 1  # Chạy 1 Chrome worker
-    python vm_manager.py --excel      # Mở cả Excel API worker
+    python vm_manager.py                  # 2 Chrome workers (default)
+    python vm_manager.py --chrome 3       # 3 Chrome workers
+    python vm_manager.py --chrome 5       # 5 Chrome workers
+    python vm_manager.py --no-excel       # Không chạy Excel worker
 
-Commands trong Manager:
-    status  - Xem trạng thái workers
-    restart - Restart tất cả workers
-    restart 1 - Restart worker 1
-    kill    - Kill tất cả Chrome processes
-    excel   - Mở Excel API worker
-    quit    - Thoát và đóng tất cả
+Commands:
+    status   - Xem trạng thái
+    restart  - Restart tất cả
+    restart chrome 1 - Restart Chrome worker 1
+    restart excel    - Restart Excel worker
+    add KA2-0001     - Thêm project vào queue
+    kill     - Kill tất cả Chrome processes
+    scale 5  - Scale lên 5 Chrome workers
+    quit     - Thoát
 """
 
 import subprocess
 import sys
 import os
 import time
+import json
 import threading
-import signal
+import queue
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional, List
-from dataclasses import dataclass
+from typing import Dict, Optional, List, Set
+from dataclasses import dataclass, field
 from enum import Enum
 import re
 
@@ -45,231 +53,291 @@ TOOL_DIR = Path(__file__).parent
 # CONFIGURATION
 # ================================================================================
 
-# Patterns để detect lỗi trong output
+# Task types
+class TaskType(Enum):
+    EXCEL = "excel"      # Tạo/hoàn thiện Excel
+    IMAGE = "image"      # Tạo ảnh
+    VIDEO = "video"      # Tạo video
+
+
+class TaskStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class WorkerStatus(Enum):
+    STOPPED = "stopped"
+    STARTING = "starting"
+    IDLE = "idle"
+    WORKING = "working"
+    ERROR = "error"
+    RESTARTING = "restarting"
+
+
+# Error patterns for auto-restart
 ERROR_PATTERNS = [
     r"Chrome attempt \d+/\d+ failed",
     r"✗ Chrome error",
     r"✗ Không restart được Chrome",
     r"The browser connection fails",
     r"reCAPTCHA evaluation failed",
-    r"✗ Failed:",
-    r"ERROR: No SRT file",
-    r"Network error",
+    r"403.*error",
 ]
 
-# Patterns cho lỗi fatal (cần restart ngay)
-FATAL_ERROR_PATTERNS = [
-    r"Chrome attempt 3/3 failed",  # Hết retry
+FATAL_PATTERNS = [
+    r"Chrome attempt 3/3 failed",
     r"✗ Không restart được Chrome",
-    r"The browser connection fails.*Version:",  # Final Chrome error
 ]
 
-# Thời gian chờ trước khi restart (giây)
+# Timing
 RESTART_DELAY = 5
-
-# Số lỗi liên tiếp trước khi restart
-MAX_ERRORS_BEFORE_RESTART = 3
+SCAN_INTERVAL = 30
+MAX_ERRORS = 3
 
 
 # ================================================================================
-# WORKER STATUS
+# DATA STRUCTURES
 # ================================================================================
 
-class WorkerStatus(Enum):
-    STOPPED = "STOPPED"
-    STARTING = "STARTING"
-    RUNNING = "RUNNING"
-    ERROR = "ERROR"
-    RESTARTING = "RESTARTING"
+@dataclass
+class Task:
+    """Một task trong queue."""
+    project_code: str
+    task_type: TaskType
+    status: TaskStatus = TaskStatus.PENDING
+    worker_id: Optional[str] = None
+    created_at: datetime = field(default_factory=datetime.now)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error: str = ""
+    retry_count: int = 0
 
 
 @dataclass
 class WorkerInfo:
     """Thông tin về một worker subprocess."""
-    worker_id: int
-    worker_type: str  # "chrome" or "excel"
+    worker_id: str
+    worker_type: str  # "excel" or "chrome"
+    worker_num: int = 0  # Số thứ tự Chrome (1, 2, 3...)
     process: Optional[subprocess.Popen] = None
     status: WorkerStatus = WorkerStatus.STOPPED
+    current_task: Optional[Task] = None
     start_time: Optional[datetime] = None
     error_count: int = 0
     restart_count: int = 0
-    last_error: str = ""
-    last_output_line: str = ""
+    completed_tasks: int = 0
+    last_output: str = ""
 
 
 # ================================================================================
-# VM MANAGER
+# VM MANAGER - AI AGENT
 # ================================================================================
 
 class VMManager:
-    """Manager điều khiển các Chrome workers."""
+    """
+    AI Agent điều phối các workers.
+    """
 
-    def __init__(self, num_chrome_workers: int = 2, auto_restart: bool = True):
+    def __init__(self, num_chrome_workers: int = 2, enable_excel: bool = True):
         self.num_chrome_workers = num_chrome_workers
-        self.auto_restart = auto_restart
-        self.workers: Dict[str, WorkerInfo] = {}
-        self._stop_flag = False
-        self._monitor_threads: List[threading.Thread] = []
-        self._lock = threading.Lock()
+        self.enable_excel = enable_excel
 
-        # Initialize workers
-        for i in range(num_chrome_workers):
-            key = f"chrome_{i+1}"
-            self.workers[key] = WorkerInfo(
-                worker_id=i + 1,
-                worker_type="chrome"
+        # Workers
+        self.workers: Dict[str, WorkerInfo] = {}
+        self._init_workers()
+
+        # Task queue
+        self.task_queue: queue.Queue = queue.Queue()
+        self.active_tasks: Dict[str, Task] = {}  # project_code → Task
+        self.completed_projects: Set[str] = set()
+
+        # Control
+        self._stop_flag = False
+        self._lock = threading.Lock()
+        self._threads: List[threading.Thread] = []
+
+        # Project tracking
+        self.auto_path = self._detect_auto_path()
+        self.channel = self._get_channel_from_folder()
+
+    def _init_workers(self):
+        """Initialize worker slots."""
+        # Excel worker
+        if self.enable_excel:
+            self.workers["excel"] = WorkerInfo(
+                worker_id="excel",
+                worker_type="excel"
             )
 
-        # Excel worker (optional)
-        self.workers["excel"] = WorkerInfo(
-            worker_id=0,
-            worker_type="excel"
-        )
+        # Chrome workers
+        for i in range(self.num_chrome_workers):
+            worker_id = f"chrome_{i+1}"
+            self.workers[worker_id] = WorkerInfo(
+                worker_id=worker_id,
+                worker_type="chrome",
+                worker_num=i + 1
+            )
 
-    def log(self, msg: str, worker_key: str = "MANAGER"):
-        """Log message với timestamp."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] [{worker_key}] {msg}")
-
-    def kill_all_chrome_processes(self):
-        """Kill tất cả Chrome processes (giống làm thủ công)."""
-        self.log("Killing all Chrome processes...", "MANAGER")
-
-        if sys.platform == "win32":
-            # Windows - kill chrome.exe và GoogleChromePortable.exe
+    def _detect_auto_path(self) -> Optional[Path]:
+        """Detect network AUTO path."""
+        paths = [
+            Path(r"\\tsclient\D\AUTO"),
+            Path(r"\\vmware-host\Shared Folders\D\AUTO"),
+            Path(r"Z:\AUTO"),
+            Path(r"Y:\AUTO"),
+            Path(r"D:\AUTO"),
+        ]
+        for p in paths:
             try:
-                subprocess.run(
-                    ["taskkill", "/F", "/IM", "chrome.exe"],
-                    capture_output=True,
-                    timeout=10
-                )
+                if p.exists():
+                    return p
             except:
                 pass
+        return None
 
+    def _get_channel_from_folder(self) -> Optional[str]:
+        """Get channel filter from folder name."""
+        folder = TOOL_DIR.parent.name
+        if "-T" in folder:
+            return folder.split("-T")[0]
+        elif folder.startswith("KA") or folder.startswith("AR"):
+            return folder.split("-")[0] if "-" in folder else folder[:3]
+        return None
+
+    # ================================================================================
+    # LOGGING
+    # ================================================================================
+
+    def log(self, msg: str, source: str = "MANAGER", level: str = "INFO"):
+        """Log với timestamp."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        emoji = {
+            "INFO": "  ",
+            "WARN": "⚠️",
+            "ERROR": "❌",
+            "SUCCESS": "✅",
+            "TASK": "📋",
+        }.get(level, "  ")
+        print(f"[{timestamp}] [{source}] {emoji} {msg}")
+
+    # ================================================================================
+    # CHROME PROCESS CONTROL
+    # ================================================================================
+
+    def kill_all_chrome(self):
+        """Kill tất cả Chrome processes."""
+        self.log("Killing all Chrome processes...", "SYSTEM")
+
+        if sys.platform == "win32":
             try:
-                subprocess.run(
-                    ["taskkill", "/F", "/IM", "GoogleChromePortable.exe"],
-                    capture_output=True,
-                    timeout=10
-                )
+                subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"],
+                             capture_output=True, timeout=10)
+            except:
+                pass
+            try:
+                subprocess.run(["taskkill", "/F", "/IM", "GoogleChromePortable.exe"],
+                             capture_output=True, timeout=10)
             except:
                 pass
         else:
-            # Linux/Mac
             try:
                 subprocess.run(["pkill", "-f", "chrome"], capture_output=True, timeout=10)
             except:
                 pass
 
-        time.sleep(2)  # Đợi Chrome đóng hoàn toàn
-        self.log("Chrome processes killed", "MANAGER")
+        time.sleep(2)
+        self.log("Chrome processes killed", "SYSTEM", "SUCCESS")
 
-    def get_chrome_worker_script(self, worker_id: int) -> str:
-        """Lấy script path cho Chrome worker."""
-        if worker_id == 1:
-            return str(TOOL_DIR / "_run_chrome1.py")
-        elif worker_id == 2:
-            return str(TOOL_DIR / "_run_chrome2.py")
+    # ================================================================================
+    # WORKER CONTROL
+    # ================================================================================
+
+    def _get_worker_script(self, worker: WorkerInfo) -> Path:
+        """Get script path for worker."""
+        if worker.worker_type == "excel":
+            return TOOL_DIR / "run_excel_api.py"
         else:
-            return str(TOOL_DIR / f"_run_chrome{worker_id}.py")
+            # Chrome workers: _run_chrome1.py, _run_chrome2.py, etc.
+            return TOOL_DIR / f"_run_chrome{worker.worker_num}.py"
 
-    def start_worker(self, worker_key: str) -> bool:
+    def start_worker(self, worker_id: str) -> bool:
         """Start một worker subprocess."""
-        if worker_key not in self.workers:
-            self.log(f"Worker {worker_key} not found", "ERROR")
+        if worker_id not in self.workers:
+            self.log(f"Worker {worker_id} not found", "ERROR", "ERROR")
             return False
 
-        worker = self.workers[worker_key]
+        worker = self.workers[worker_id]
 
-        # Nếu đang chạy, không start lại
+        # Check if already running
         if worker.process and worker.process.poll() is None:
-            self.log(f"Worker {worker_key} already running", worker_key)
+            self.log(f"{worker_id} already running", worker_id)
             return True
 
         worker.status = WorkerStatus.STARTING
-        self.log(f"Starting {worker_key}...", worker_key)
+        script = self._get_worker_script(worker)
+
+        if not script.exists():
+            self.log(f"Script not found: {script}", worker_id, "ERROR")
+            worker.status = WorkerStatus.ERROR
+            return False
+
+        self.log(f"Starting {worker_id}...", worker_id)
 
         try:
-            if worker.worker_type == "chrome":
-                script = self.get_chrome_worker_script(worker.worker_id)
+            if sys.platform == "win32":
+                # Windows - mở CMD mới
+                title = f"{worker.worker_type.upper()} Worker {worker.worker_num or ''}"
+                args = ""
 
-                # Check script exists
-                if not Path(script).exists():
-                    self.log(f"Script not found: {script}", "ERROR")
-                    worker.status = WorkerStatus.ERROR
-                    return False
+                if worker.worker_type == "excel":
+                    args = "--loop"  # Excel chạy loop
 
-                # Start subprocess
-                if sys.platform == "win32":
-                    # Windows - mở CMD mới
-                    cmd = f'start "Chrome Worker {worker.worker_id}" cmd /k "cd /d {TOOL_DIR} && python {script}"'
-                    worker.process = subprocess.Popen(
-                        cmd,
-                        shell=True,
-                        cwd=str(TOOL_DIR)
-                    )
-                else:
-                    # Linux - chạy trong background với output capture
-                    worker.process = subprocess.Popen(
-                        [sys.executable, script],
-                        cwd=str(TOOL_DIR),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1
-                    )
+                cmd = f'start "{title}" cmd /k "cd /d {TOOL_DIR} && python {script.name} {args}"'
+                worker.process = subprocess.Popen(cmd, shell=True, cwd=str(TOOL_DIR))
+            else:
+                # Linux
+                args = ["--loop"] if worker.worker_type == "excel" else []
+                worker.process = subprocess.Popen(
+                    [sys.executable, str(script)] + args,
+                    cwd=str(TOOL_DIR),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
 
-                    # Start monitor thread
-                    monitor = threading.Thread(
-                        target=self._monitor_worker_output,
-                        args=(worker_key,),
-                        daemon=True
-                    )
-                    monitor.start()
-                    self._monitor_threads.append(monitor)
+                # Monitor thread
+                t = threading.Thread(
+                    target=self._monitor_worker,
+                    args=(worker_id,),
+                    daemon=True
+                )
+                t.start()
+                self._threads.append(t)
 
-            elif worker.worker_type == "excel":
-                script = str(TOOL_DIR / "run_excel_api.py")
-
-                if not Path(script).exists():
-                    self.log(f"Excel script not found: {script}", "ERROR")
-                    worker.status = WorkerStatus.ERROR
-                    return False
-
-                if sys.platform == "win32":
-                    cmd = f'start "Excel API Worker" cmd /k "cd /d {TOOL_DIR} && python {script}"'
-                    worker.process = subprocess.Popen(cmd, shell=True, cwd=str(TOOL_DIR))
-                else:
-                    worker.process = subprocess.Popen(
-                        [sys.executable, script],
-                        cwd=str(TOOL_DIR),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1
-                    )
-
-            worker.status = WorkerStatus.RUNNING
+            worker.status = WorkerStatus.IDLE
             worker.start_time = datetime.now()
             worker.error_count = 0
-            self.log(f"Started {worker_key} (PID: {worker.process.pid if worker.process else 'N/A'})", worker_key)
+
+            self.log(f"{worker_id} started", worker_id, "SUCCESS")
             return True
 
         except Exception as e:
-            self.log(f"Failed to start {worker_key}: {e}", "ERROR")
+            self.log(f"Failed to start {worker_id}: {e}", worker_id, "ERROR")
             worker.status = WorkerStatus.ERROR
-            worker.last_error = str(e)
             return False
 
-    def stop_worker(self, worker_key: str) -> bool:
-        """Stop một worker subprocess."""
-        if worker_key not in self.workers:
+    def stop_worker(self, worker_id: str) -> bool:
+        """Stop một worker."""
+        if worker_id not in self.workers:
             return False
 
-        worker = self.workers[worker_key]
+        worker = self.workers[worker_id]
 
         if worker.process:
-            self.log(f"Stopping {worker_key}...", worker_key)
+            self.log(f"Stopping {worker_id}...", worker_id)
             try:
                 worker.process.terminate()
                 worker.process.wait(timeout=5)
@@ -281,147 +349,175 @@ class VMManager:
             worker.process = None
 
         worker.status = WorkerStatus.STOPPED
+        worker.current_task = None
         return True
 
-    def restart_worker(self, worker_key: str, kill_chrome: bool = True) -> bool:
-        """
-        Restart một worker.
-
-        Args:
-            worker_key: Key của worker
-            kill_chrome: Có kill Chrome processes trước không (giống làm thủ công)
-        """
-        if worker_key not in self.workers:
+    def restart_worker(self, worker_id: str, kill_chrome: bool = True) -> bool:
+        """Restart một worker."""
+        if worker_id not in self.workers:
             return False
 
-        worker = self.workers[worker_key]
+        worker = self.workers[worker_id]
         worker.status = WorkerStatus.RESTARTING
         worker.restart_count += 1
 
-        self.log(f"Restarting {worker_key} (lần {worker.restart_count})...", worker_key)
+        self.log(f"Restarting {worker_id} (lần {worker.restart_count})...", worker_id)
 
-        # 1. Stop worker subprocess
-        self.stop_worker(worker_key)
+        # Stop current
+        self.stop_worker(worker_id)
 
-        # 2. Kill Chrome processes nếu là Chrome worker
+        # Kill Chrome if needed
         if kill_chrome and worker.worker_type == "chrome":
-            self.kill_all_chrome_processes()
+            self.kill_all_chrome()
 
-        # 3. Đợi một chút
         time.sleep(RESTART_DELAY)
 
-        # 4. Start lại
-        return self.start_worker(worker_key)
+        return self.start_worker(worker_id)
 
-    def _monitor_worker_output(self, worker_key: str):
-        """Monitor output của worker subprocess (Linux only)."""
-        worker = self.workers[worker_key]
+    def _monitor_worker(self, worker_id: str):
+        """Monitor worker output (Linux only)."""
+        worker = self.workers[worker_id]
 
         while not self._stop_flag and worker.process:
             try:
                 line = worker.process.stdout.readline()
                 if not line:
                     if worker.process.poll() is not None:
-                        # Process đã kết thúc
-                        self.log(f"Process exited (code: {worker.process.returncode})", worker_key)
+                        self.log(f"Process exited", worker_id, "WARN")
                         worker.status = WorkerStatus.STOPPED
 
-                        # Auto restart nếu được bật
-                        if self.auto_restart and not self._stop_flag:
-                            self.log("Auto-restarting...", worker_key)
+                        # Auto-restart
+                        if not self._stop_flag:
                             time.sleep(RESTART_DELAY)
-                            self.restart_worker(worker_key)
+                            self.restart_worker(worker_id)
                         break
                     continue
 
                 line = line.strip()
-                worker.last_output_line = line
+                worker.last_output = line
+                print(f"[{worker_id}] {line}")
 
-                # Print output
-                print(f"[{worker_key}] {line}")
-
-                # Check for errors
-                self._check_for_errors(worker_key, line)
+                # Check errors
+                self._check_errors(worker_id, line)
 
             except Exception as e:
-                self.log(f"Monitor error: {e}", worker_key)
+                self.log(f"Monitor error: {e}", worker_id, "ERROR")
                 break
 
-    def _check_for_errors(self, worker_key: str, line: str):
-        """Check output line cho errors."""
-        worker = self.workers[worker_key]
+    def _check_errors(self, worker_id: str, line: str):
+        """Check output for errors."""
+        worker = self.workers[worker_id]
 
-        # Check fatal errors
-        for pattern in FATAL_ERROR_PATTERNS:
+        # Fatal errors → immediate restart
+        for pattern in FATAL_PATTERNS:
             if re.search(pattern, line, re.IGNORECASE):
-                self.log(f"FATAL ERROR detected: {line[:100]}", worker_key)
-                worker.last_error = line
-                worker.status = WorkerStatus.ERROR
-
-                if self.auto_restart:
-                    self.log("Auto-restart triggered by fatal error", worker_key)
-                    # Restart trong thread riêng để không block
-                    threading.Thread(
-                        target=self.restart_worker,
-                        args=(worker_key,),
-                        daemon=True
-                    ).start()
+                self.log(f"FATAL: {line[:80]}", worker_id, "ERROR")
+                threading.Thread(
+                    target=self.restart_worker,
+                    args=(worker_id,),
+                    daemon=True
+                ).start()
                 return
 
-        # Check normal errors
+        # Normal errors
         for pattern in ERROR_PATTERNS:
             if re.search(pattern, line, re.IGNORECASE):
                 worker.error_count += 1
-                worker.last_error = line
-                self.log(f"Error detected ({worker.error_count}): {line[:80]}", worker_key)
+                self.log(f"Error ({worker.error_count}): {line[:60]}", worker_id, "WARN")
 
-                if worker.error_count >= MAX_ERRORS_BEFORE_RESTART and self.auto_restart:
-                    self.log(f"Too many errors ({worker.error_count}), restarting...", worker_key)
+                if worker.error_count >= MAX_ERRORS:
+                    self.log(f"Too many errors, restarting...", worker_id, "ERROR")
                     threading.Thread(
                         target=self.restart_worker,
-                        args=(worker_key,),
+                        args=(worker_id,),
                         daemon=True
                     ).start()
                 return
 
-    def start_all_chrome_workers(self):
-        """Start tất cả Chrome workers."""
-        self.log("Starting all Chrome workers...", "MANAGER")
+    # ================================================================================
+    # SCALING
+    # ================================================================================
 
-        # Kill Chrome trước khi start (clean state)
-        self.kill_all_chrome_processes()
+    def scale_chrome_workers(self, num_workers: int):
+        """Scale số lượng Chrome workers."""
+        current = self.num_chrome_workers
 
-        for key in self.workers:
-            if self.workers[key].worker_type == "chrome":
-                time.sleep(2)  # Delay giữa các workers
-                self.start_worker(key)
+        if num_workers > current:
+            # Scale up
+            for i in range(current + 1, num_workers + 1):
+                worker_id = f"chrome_{i}"
+                self.workers[worker_id] = WorkerInfo(
+                    worker_id=worker_id,
+                    worker_type="chrome",
+                    worker_num=i
+                )
+                self.start_worker(worker_id)
 
-    def stop_all_workers(self):
+        elif num_workers < current:
+            # Scale down
+            for i in range(num_workers + 1, current + 1):
+                worker_id = f"chrome_{i}"
+                self.stop_worker(worker_id)
+                del self.workers[worker_id]
+
+        self.num_chrome_workers = num_workers
+        self.log(f"Scaled to {num_workers} Chrome workers", "MANAGER", "SUCCESS")
+
+    # ================================================================================
+    # START ALL
+    # ================================================================================
+
+    def start_all(self):
+        """Start tất cả workers."""
+        self.log("Starting all workers...", "MANAGER")
+
+        # Kill Chrome trước (clean state)
+        self.kill_all_chrome()
+
+        # Start Excel worker first
+        if self.enable_excel:
+            self.start_worker("excel")
+            time.sleep(2)
+
+        # Start Chrome workers
+        for i in range(1, self.num_chrome_workers + 1):
+            worker_id = f"chrome_{i}"
+            self.start_worker(worker_id)
+            time.sleep(2)  # Delay giữa các Chrome
+
+    def stop_all(self):
         """Stop tất cả workers."""
         self._stop_flag = True
 
-        for key in self.workers:
-            self.stop_worker(key)
+        for worker_id in list(self.workers.keys()):
+            self.stop_worker(worker_id)
 
-        self.kill_all_chrome_processes()
+        self.kill_all_chrome()
+        self.log("All workers stopped", "MANAGER")
 
-    def get_status_summary(self) -> str:
-        """Lấy tóm tắt trạng thái."""
+    # ================================================================================
+    # STATUS
+    # ================================================================================
+
+    def get_status(self) -> str:
+        """Get status summary."""
         lines = [
             "",
-            "=" * 60,
-            "  WORKER STATUS",
-            "=" * 60,
+            "═" * 65,
+            "  VM MANAGER STATUS",
+            "═" * 65,
+            f"  Channel: {self.channel or 'ALL'}",
+            f"  Auto path: {self.auto_path or 'Not found'}",
+            "",
+            "  WORKERS:",
         ]
 
-        for key, worker in self.workers.items():
-            if worker.worker_type == "excel" and worker.status == WorkerStatus.STOPPED:
-                continue  # Skip Excel nếu không chạy
-
-            status_emoji = {
-                WorkerStatus.STOPPED: "⏹️",
+        for worker_id, worker in self.workers.items():
+            emoji = {
+                WorkerStatus.STOPPED: "⏹️ ",
                 WorkerStatus.STARTING: "🔄",
-                WorkerStatus.RUNNING: "✅",
+                WorkerStatus.IDLE: "😴",
+                WorkerStatus.WORKING: "⚡",
                 WorkerStatus.ERROR: "❌",
                 WorkerStatus.RESTARTING: "🔄",
             }.get(worker.status, "❓")
@@ -429,42 +525,50 @@ class VMManager:
             uptime = ""
             if worker.start_time:
                 delta = datetime.now() - worker.start_time
-                minutes = int(delta.total_seconds() // 60)
-                uptime = f" (uptime: {minutes}m)"
+                mins = int(delta.total_seconds() // 60)
+                uptime = f" ({mins}m)"
 
             lines.append(
-                f"  {status_emoji} {key}: {worker.status.value}"
+                f"    {emoji} {worker_id}: {worker.status.value}"
                 f" | errors: {worker.error_count}"
                 f" | restarts: {worker.restart_count}"
+                f" | done: {worker.completed_tasks}"
                 f"{uptime}"
             )
 
-            if worker.last_error:
-                lines.append(f"      Last error: {worker.last_error[:60]}...")
-
-        lines.append("=" * 60)
+        lines.append("")
+        lines.append("═" * 65)
         return "\n".join(lines)
 
+    # ================================================================================
+    # INTERACTIVE
+    # ================================================================================
+
     def run_interactive(self):
-        """Chạy interactive mode với command prompt."""
-        print("""
-╔═══════════════════════════════════════════════════════════════╗
-║              VM MANAGER - Chrome Worker Control               ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Commands:                                                    ║
-║    status       - Xem trạng thái workers                      ║
-║    restart      - Restart tất cả Chrome workers               ║
-║    restart 1    - Restart Chrome worker 1                     ║
-║    restart 2    - Restart Chrome worker 2                     ║
-║    kill         - Kill tất cả Chrome processes                ║
-║    excel        - Mở Excel API worker                         ║
-║    stop excel   - Dừng Excel API worker                       ║
-║    quit/exit    - Thoát và đóng tất cả                        ║
-╚═══════════════════════════════════════════════════════════════╝
+        """Run interactive mode."""
+        print(f"""
+╔═══════════════════════════════════════════════════════════════════╗
+║           VM MANAGER - AI Agent for Chrome Workers                ║
+╠═══════════════════════════════════════════════════════════════════╣
+║                                                                   ║
+║  Workers: 1 Excel (tuần tự) + {self.num_chrome_workers} Chrome (song song)              ║
+║  Channel: {str(self.channel or 'ALL'):<10}                                            ║
+║                                                                   ║
+╠═══════════════════════════════════════════════════════════════════╣
+║  Commands:                                                        ║
+║    status              - Xem trạng thái                           ║
+║    restart             - Restart tất cả                           ║
+║    restart chrome 1    - Restart Chrome worker 1                  ║
+║    restart chrome 2    - Restart Chrome worker 2                  ║
+║    restart excel       - Restart Excel worker                     ║
+║    kill                - Kill tất cả Chrome processes             ║
+║    scale <N>           - Scale lên N Chrome workers               ║
+║    quit                - Thoát                                    ║
+╚═══════════════════════════════════════════════════════════════════╝
 """)
 
-        # Start Chrome workers
-        self.start_all_chrome_workers()
+        # Start workers
+        self.start_all()
 
         # Interactive loop
         try:
@@ -476,48 +580,50 @@ class VMManager:
                         continue
 
                     elif cmd == "status":
-                        print(self.get_status_summary())
+                        print(self.get_status())
 
                     elif cmd == "restart":
-                        for key in self.workers:
-                            if self.workers[key].worker_type == "chrome":
-                                self.restart_worker(key)
+                        for wid in list(self.workers.keys()):
+                            self.restart_worker(wid)
 
-                    elif cmd.startswith("restart "):
+                    elif cmd.startswith("restart chrome "):
                         try:
-                            worker_num = int(cmd.split()[1])
-                            key = f"chrome_{worker_num}"
-                            if key in self.workers:
-                                self.restart_worker(key)
-                            else:
-                                print(f"Worker {worker_num} not found")
-                        except ValueError:
-                            print("Usage: restart <worker_number>")
+                            num = int(cmd.split()[-1])
+                            self.restart_worker(f"chrome_{num}")
+                        except:
+                            print("Usage: restart chrome <number>")
+
+                    elif cmd == "restart excel":
+                        self.restart_worker("excel")
 
                     elif cmd == "kill":
-                        self.kill_all_chrome_processes()
+                        self.kill_all_chrome()
 
-                    elif cmd == "excel":
-                        self.start_worker("excel")
-
-                    elif cmd == "stop excel":
-                        self.stop_worker("excel")
+                    elif cmd.startswith("scale "):
+                        try:
+                            num = int(cmd.split()[-1])
+                            if 1 <= num <= 10:
+                                self.scale_chrome_workers(num)
+                            else:
+                                print("Scale 1-10 Chrome workers")
+                        except:
+                            print("Usage: scale <number>")
 
                     elif cmd in ("quit", "exit", "q"):
                         print("\nShutting down...")
                         break
 
                     else:
-                        print(f"Unknown command: {cmd}")
-                        print("Commands: status, restart, kill, excel, quit")
+                        print(f"Unknown: {cmd}")
+                        print("Commands: status, restart, kill, scale, quit")
 
                 except EOFError:
                     break
                 except KeyboardInterrupt:
-                    print("\nUse 'quit' to exit properly")
+                    print("\nUse 'quit' to exit")
 
         finally:
-            self.stop_all_workers()
+            self.stop_all()
             print("VM Manager stopped.")
 
 
@@ -528,35 +634,18 @@ class VMManager:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="VM Manager - Quản lý Chrome workers trên máy ảo"
-    )
-    parser.add_argument(
-        "--workers", "-w",
-        type=int,
-        default=2,
-        help="Số Chrome workers (default: 2)"
-    )
-    parser.add_argument(
-        "--no-auto-restart",
-        action="store_true",
-        help="Tắt auto-restart khi có lỗi"
-    )
-    parser.add_argument(
-        "--excel",
-        action="store_true",
-        help="Mở cả Excel API worker"
-    )
+    parser = argparse.ArgumentParser(description="VM Manager - AI Agent System")
+    parser.add_argument("--chrome", "-c", type=int, default=2,
+                       help="Số Chrome workers (default: 2)")
+    parser.add_argument("--no-excel", action="store_true",
+                       help="Không chạy Excel worker")
 
     args = parser.parse_args()
 
     manager = VMManager(
-        num_chrome_workers=args.workers,
-        auto_restart=not args.no_auto_restart
+        num_chrome_workers=args.chrome,
+        enable_excel=not args.no_excel
     )
-
-    if args.excel:
-        manager.start_worker("excel")
 
     manager.run_interactive()
 
