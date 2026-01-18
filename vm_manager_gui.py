@@ -1768,14 +1768,22 @@ class VMManagerGUI:
     def _on_excel_mode_change(self, event=None):
         mode = self.excel_mode_var.get()
         self._log(f"Excel mode changed to: {mode}")
+        # Save immediately (even without manager)
+        from vm_manager import SettingsManager
+        settings = SettingsManager()
+        settings.excel_mode = mode
         if self.manager:
-            self.manager.settings.excel_mode = mode
+            self.manager.settings = settings
 
     def _on_video_mode_change(self, event=None):
         mode = self.video_mode_var.get()
         self._log(f"Video mode changed to: {mode}")
+        # Save immediately (even without manager)
+        from vm_manager import SettingsManager
+        settings = SettingsManager()
+        settings.video_mode = mode
         if self.manager:
-            self.manager.settings.video_mode = mode
+            self.manager.settings = settings
 
     def _on_chrome_count_change(self):
         try:
