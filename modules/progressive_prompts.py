@@ -814,7 +814,30 @@ Return JSON only:
         segments = data["segments"]
         total_srt = len(srt_entries)
 
-        # VALIDATION: Check if segments cover all SRT entries
+        # VALIDATION 1: Check gaps between segments
+        if segments and len(segments) > 1:
+            sorted_segs = sorted(segments, key=lambda s: s.get("srt_range_start", 0))
+            for i in range(len(sorted_segs) - 1):
+                current_end = sorted_segs[i].get("srt_range_end", 0)
+                next_start = sorted_segs[i + 1].get("srt_range_start", 0)
+                if next_start > current_end + 1:
+                    gap_size = next_start - current_end - 1
+                    self._log(f"  [WARN] Gap detected: SRT {current_end + 1}-{next_start - 1} ({gap_size} entries)", "WARNING")
+                    # Extend previous segment to fill gap
+                    sorted_segs[i]["srt_range_end"] = next_start - 1
+                    sorted_segs[i]["image_count"] = sorted_segs[i].get("image_count", 1) + max(1, gap_size // 5)
+                    self._log(f"     -> Extended segment {i+1} to cover gap")
+            segments = sorted_segs
+            data["segments"] = segments
+
+        # VALIDATION 2: Ensure first segment starts at SRT 1
+        if segments and segments[0].get("srt_range_start", 1) > 1:
+            first_start = segments[0].get("srt_range_start", 1)
+            self._log(f"  [WARN] First segment starts at SRT {first_start}, not 1", "WARNING")
+            segments[0]["srt_range_start"] = 1
+            self._log(f"     -> Fixed: First segment now starts at SRT 1")
+
+        # VALIDATION 3: Check if segments cover all SRT entries
         if segments:
             last_seg = segments[-1]
             last_srt_end = last_seg.get("srt_range_end", 0)
@@ -1468,7 +1491,41 @@ Return JSON only:
             else:
                 # Thêm scenes từ API
                 seg_scenes = data["scenes"]
-                self._log(f"     -> Got {len(seg_scenes)} scenes from API")
+                self._log(f"     -> Got {len(seg_scenes)} scenes from API (expected {image_count})")
+
+                # FIX: Kiểm tra nếu API trả về ít scenes hơn expected
+                if len(seg_scenes) < image_count:
+                    self._log(f"     [WARN] API returned {len(seg_scenes)} < {image_count} expected, creating additional scenes", "WARNING")
+
+                    # Tính duration cho mỗi scene bổ sung
+                    remaining_duration = seg_duration - sum(s.get("duration", 0) for s in seg_scenes)
+                    remaining_count = image_count - len(seg_scenes)
+                    add_duration = remaining_duration / remaining_count if remaining_count > 0 else seg_duration / image_count
+
+                    # Tạo thêm scenes từ SRT text
+                    for i in range(remaining_count):
+                        # Chia SRT text cho scenes bổ sung
+                        entries_per_scene = max(1, (srt_end - srt_start + 1) // image_count)
+                        add_srt_start = srt_start + (len(seg_scenes) + i) * entries_per_scene
+                        add_srt_end = min(add_srt_start + entries_per_scene - 1, srt_end)
+
+                        add_text = " ".join([srt_entries[j-1].text for j in range(add_srt_start, min(add_srt_end + 1, len(srt_entries) + 1))])
+
+                        fallback_scene = {
+                            "scene_id": 0,  # Will be assigned below
+                            "srt_indices": list(range(add_srt_start, add_srt_end + 1)),
+                            "srt_start": srt_entries[add_srt_start - 1].start_time if add_srt_start <= len(srt_entries) else "",
+                            "srt_end": srt_entries[add_srt_end - 1].end_time if add_srt_end <= len(srt_entries) else "",
+                            "duration": add_duration,
+                            "srt_text": add_text[:500],
+                            "visual_moment": f"[Auto] {seg_name} - Additional shot {i+1}",
+                            "characters_used": chars_involved[0] if chars_involved else "",
+                            "location_used": list(loc_locks.keys())[0] if loc_locks else "",
+                            "camera": "Medium shot",
+                            "lighting": "Natural lighting"
+                        }
+                        seg_scenes.append(fallback_scene)
+                        self._log(f"        -> Added fallback scene for {seg_name}")
 
                 for scene in seg_scenes:
                     scene["scene_id"] = scene_id_counter
@@ -2356,13 +2413,51 @@ Return JSON only with EXACTLY {len(batch)} scenes:
                 except Exception as e:
                     self._log(f"     Batch {batch_num} error: {e}", "ERROR")
 
+        # Helper function để tạo fallback prompt
+        def create_fallback_prompt(original: dict) -> dict:
+            """Tạo fallback prompt khi API fail."""
+            srt_text = original.get("srt_text", "")
+            visual_moment = original.get("visual_moment", "")
+            chars_used = original.get("characters_used", "")
+            loc_used = original.get("location_used", "")
+            camera = original.get("camera", "Medium shot")
+            lighting = original.get("lighting", "Natural lighting")
+
+            # Tạo prompt từ context
+            fallback_prompt = f"Cinematic {camera.lower()}, {visual_moment or srt_text[:200]}. "
+            fallback_prompt += f"{lighting}, 4K photorealistic, dramatic composition, film quality."
+
+            # Thêm character annotations
+            if chars_used:
+                for cid in chars_used.split(","):
+                    cid = cid.strip()
+                    if cid:
+                        img = char_image_lookup.get(cid, f"{cid}.png")
+                        fallback_prompt += f" ({img})"
+
+            # Thêm location annotation
+            if loc_used:
+                img = loc_image_lookup.get(loc_used, f"{loc_used}.png")
+                fallback_prompt += f" (reference: {img})"
+
+            return {
+                "scene_id": int(original.get("scene_id", 0)),
+                "img_prompt": fallback_prompt,
+                "video_prompt": f"Smooth {camera.lower()} camera movement: {visual_moment or srt_text[:100]}"
+            }
+
         # Process and save results sequentially (Excel not thread-safe)
         for batch_num in sorted(batch_results.keys()):
             _, batch, api_scenes, error = batch_results[batch_num]
 
+            # FIX: Khi API fail hoàn toàn, tạo fallback cho TẤT CẢ scenes trong batch
             if not api_scenes:
-                self._log(f"  Batch {batch_num}: skipped ({error})", "WARNING")
-                continue
+                self._log(f"  Batch {batch_num}: API failed ({error}), creating FALLBACK for all {len(batch)} scenes", "WARNING")
+                api_scenes = []
+                for original in batch:
+                    fallback = create_fallback_prompt(original)
+                    api_scenes.append(fallback)
+                    self._log(f"     -> Fallback created for scene {fallback['scene_id']}")
 
             # Validate và tạo fallback cho scenes thiếu
             if len(api_scenes) < len(batch):
@@ -2403,12 +2498,34 @@ Return JSON only with EXACTLY {len(batch)} scenes:
                         api_scenes.append(fallback_scene)
                         self._log(f"     -> Created fallback for scene {orig_id}")
 
-            # Check duplicates
-            seen_prompts = set()
-            duplicate_count = sum(1 for s in api_scenes if (p := s.get("img_prompt", "")[:100]) in seen_prompts or seen_prompts.add(p))
-            if duplicate_count > len(api_scenes) * 0.5:
-                self._log(f"  Batch {batch_num}: >50% duplicates, skipped!", "ERROR")
-                continue
+            # FIX: Xử lý duplicates - tạo unique prompts cho duplicates thay vì skip batch
+            seen_prompts = {}  # prompt_prefix -> list of scene_ids
+            for s in api_scenes:
+                prompt_prefix = s.get("img_prompt", "")[:100]
+                sid = int(s.get("scene_id", 0))
+                if prompt_prefix in seen_prompts:
+                    seen_prompts[prompt_prefix].append(sid)
+                else:
+                    seen_prompts[prompt_prefix] = [sid]
+
+            # Tìm duplicates
+            duplicates = {k: v for k, v in seen_prompts.items() if len(v) > 1}
+            if duplicates:
+                duplicate_count = sum(len(v) - 1 for v in duplicates.values())
+                self._log(f"  [WARN] Batch {batch_num}: {duplicate_count} duplicate prompts detected")
+
+                # Thay thế duplicate bằng unique fallback
+                for dup_ids in duplicates.values():
+                    # Giữ lại first, thay thế rest
+                    for dup_id in dup_ids[1:]:
+                        original = next((o for o in batch if int(o.get("scene_id", 0)) == dup_id), None)
+                        if original:
+                            # Tìm và replace scene trong api_scenes
+                            for i, s in enumerate(api_scenes):
+                                if int(s.get("scene_id", 0)) == dup_id:
+                                    api_scenes[i] = create_fallback_prompt(original)
+                                    self._log(f"     -> Replaced duplicate scene {dup_id} with unique fallback")
+                                    break
 
             # Save scenes
             try:
@@ -2461,8 +2578,59 @@ Return JSON only with EXACTLY {len(batch)} scenes:
 
         self._log(f"\n  -> Total: Created {total_created} scene prompts")
 
+        # =========================================================================
+        # FINAL VALIDATION: Đảm bảo TẤT CẢ scenes trong director_plan đều có prompts
+        # =========================================================================
+        self._log("\n  [FINAL VALIDATION] Checking for missing scenes...")
+
+        # Re-read scenes và director_plan để kiểm tra
+        final_scenes = workbook.get_scenes()
+        final_scene_ids = {s.scene_id for s in final_scenes}
+        plan_scene_ids = {int(p.get("scene_id", 0)) for p in director_plan}
+
+        missing_ids = plan_scene_ids - final_scene_ids
+        if missing_ids:
+            self._log(f"  [CRITICAL] Found {len(missing_ids)} missing scenes: {sorted(missing_ids)[:10]}...", "ERROR")
+
+            # Tạo fallback cho scenes bị thiếu
+            for missing_id in sorted(missing_ids):
+                original = next((p for p in director_plan if int(p.get("scene_id", 0)) == missing_id), None)
+                if original:
+                    fallback = create_fallback_prompt(original)
+
+                    scene = Scene(
+                        scene_id=missing_id,
+                        srt_start=original.get("srt_start", ""),
+                        srt_end=original.get("srt_end", ""),
+                        duration=original.get("duration", 0),
+                        srt_text=original.get("srt_text", ""),
+                        img_prompt=fallback["img_prompt"],
+                        video_prompt=fallback["video_prompt"],
+                        characters_used=original.get("characters_used", ""),
+                        location_used=original.get("location_used", ""),
+                        reference_files="[]",
+                        status_img="pending",
+                        status_vid="pending"
+                    )
+                    workbook.add_scene(scene)
+                    total_created += 1
+                    self._log(f"     -> Created missing scene {missing_id}")
+
+            workbook.save()
+            self._log(f"  [FIXED] Added {len(missing_ids)} missing scenes")
+
+        # Final summary
+        final_count = len(workbook.get_scenes())
+        plan_count = len(director_plan)
+        coverage = (final_count / plan_count * 100) if plan_count > 0 else 0
+
+        self._log(f"\n  [SUMMARY] Scenes: {final_count}/{plan_count} ({coverage:.1f}% coverage)")
+
+        if coverage < 100:
+            self._log(f"  [WARN] Coverage < 100% - some scenes may be missing!", "WARNING")
+
         if total_created > 0:
-            return StepResult("create_scene_prompts", StepStatus.COMPLETED, f"Created {total_created} scenes")
+            return StepResult("create_scene_prompts", StepStatus.COMPLETED, f"Created {total_created} scenes ({coverage:.1f}% coverage)")
         else:
             return StepResult("create_scene_prompts", StepStatus.FAILED, "No scenes created")
 
