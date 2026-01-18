@@ -155,11 +155,29 @@ class ProjectStatus:
     # Chi tiết fallback
     fallback_scenes: List[int] = field(default_factory=list)  # Scenes có [FALLBACK]
 
+    # Characters & References (pre-Excel steps)
+    characters_count: int = 0  # Số nhân vật trong Excel
+    characters_with_ref: int = 0  # Số nhân vật có ảnh tham chiếu trong nv/
+    characters_missing_ref: List[str] = field(default_factory=list)  # IDs nhân vật thiếu ảnh
+    nv_images_count: int = 0  # Tổng số ảnh trong nv/ folder
+
+    # Pre-Excel workflow steps
+    step_srt: str = "pending"  # pending/done/error
+    step_characters: str = "pending"  # pending/partial/done
+    step_prompts: str = "pending"  # pending/partial/done
+
+    # Video mode & Segment 1 (for BASIC mode)
+    video_mode: str = "full"  # "basic" or "full"
+    segment1_scenes: List[int] = field(default_factory=list)  # Scene IDs in Segment 1
+    segment1_end_srt: int = 0  # Last SRT entry of Segment 1
+
     # Images & Videos
     images_done: int = 0
     images_missing: List[int] = field(default_factory=list)
     videos_done: int = 0
     videos_missing: List[int] = field(default_factory=list)
+    # Videos needed based on mode (basic = only Segment 1, full = all)
+    videos_needed: List[int] = field(default_factory=list)
     current_step: str = ""  # "excel", "image", "video", "done"
     errors: List[str] = field(default_factory=list)
 
@@ -181,8 +199,12 @@ class SettingsManager:
         return {}
 
     def save_config(self):
+        print(f"[DEBUG] Saving config to {CONFIG_FILE}")
+        print(f"[DEBUG] video_mode = {self.config.get('video_mode', 'NOT SET')}")
+        print(f"[DEBUG] excel_mode = {self.config.get('excel_mode', 'NOT SET')}")
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
+        print(f"[DEBUG] Config saved!")
 
     # Chrome settings
     @property
@@ -210,6 +232,20 @@ class SettingsManager:
     @excel_mode.setter
     def excel_mode(self, value: str):
         self.config['excel_mode'] = value
+        self.save_config()
+
+    @property
+    def video_mode(self) -> str:
+        return self.config.get('video_mode', 'full')  # "full" or "basic"
+
+    @video_mode.setter
+    def video_mode(self, value: str):
+        # Normalize value (remove "(8s)" suffix if present)
+        if "basic" in value.lower():
+            value = "basic"
+        else:
+            value = "full"
+        self.config['video_mode'] = value
         self.save_config()
 
     # IPv6 settings
@@ -327,6 +363,50 @@ class QualityChecker:
 
             status.prompts_count = status.img_prompts_count
 
+            # Check characters from Excel
+            try:
+                characters = wb.get_characters()
+                status.characters_count = len(characters)
+
+                # Check nv/ folder for reference images
+                nv_dir = project_dir / "nv"
+                if nv_dir.exists():
+                    nv_images = list(nv_dir.glob("*.png")) + list(nv_dir.glob("*.jpg")) + list(nv_dir.glob("*.jpeg"))
+                    status.nv_images_count = len(nv_images)
+                    nv_image_names = {img.stem.lower() for img in nv_images}
+
+                    # Check which characters have reference images
+                    for char in characters:
+                        char_id = char.id.lower() if char.id else ""
+                        if char_id in nv_image_names:
+                            status.characters_with_ref += 1
+                        elif char.image_file and (nv_dir / char.image_file).exists():
+                            status.characters_with_ref += 1
+                        else:
+                            if char.id:
+                                status.characters_missing_ref.append(char.id)
+            except:
+                pass
+
+            # Set pre-Excel workflow steps
+            status.step_srt = "done" if status.srt_exists else "pending"
+
+            if status.characters_count == 0:
+                status.step_characters = "pending"
+            elif status.characters_with_ref == status.characters_count:
+                status.step_characters = "done"
+            elif status.characters_with_ref > 0:
+                status.step_characters = "partial"
+            else:
+                status.step_characters = "pending"
+
+            if status.img_prompts_count == 0:
+                status.step_prompts = "pending"
+            elif status.img_prompts_count == status.total_scenes and status.fallback_prompts == 0:
+                status.step_prompts = "done"
+            else:
+                status.step_prompts = "partial"
+
             # Excel status - chi tiết hơn
             if status.prompts_count == 0:
                 status.excel_status = "empty"
@@ -344,13 +424,14 @@ class QualityChecker:
                 status.excel_status = "complete"
                 status.current_step = "image"
 
-            # Check images
+            # Check images - use actual img/{scene_id}.png path
+            img_dir = project_dir / "img"
             for scene in scenes:
-                img_path = scene.img_local_path
-                if img_path and Path(img_path).exists():
+                actual_img = img_dir / f"{scene.scene_id}.png"
+                if actual_img.exists():
                     status.images_done += 1
                 else:
-                    status.images_missing.append(scene.scene_number)
+                    status.images_missing.append(scene.scene_id)
 
             if status.excel_status == "complete":
                 if status.images_done == status.total_scenes:
@@ -358,16 +439,65 @@ class QualityChecker:
                 else:
                     status.current_step = "image"
 
-            # Check videos
+            # Check videos - use actual video/{scene_id}.mp4 path
+            video_dir = project_dir / "video"
             for scene in scenes:
-                video_path = scene.video_local_path
-                if video_path and Path(video_path).exists():
+                actual_vid = video_dir / f"{scene.scene_id}.mp4"
+                if actual_vid.exists():
                     status.videos_done += 1
                 else:
-                    status.videos_missing.append(scene.scene_number)
+                    status.videos_missing.append(scene.scene_id)
+
+            # Get video_mode from SettingsManager
+            try:
+                settings = SettingsManager()
+                status.video_mode = settings.video_mode
+            except:
+                status.video_mode = "full"
+
+            # Get Segment 1 info for BASIC mode
+            try:
+                segments = wb.get_story_segments()
+                if segments:
+                    seg1 = segments[0]  # First segment
+                    status.segment1_end_srt = seg1.get('srt_range_end', 0)
+
+                    # Find scenes that belong to Segment 1
+                    srt_start = seg1.get('srt_range_start', 1)
+                    srt_end = seg1.get('srt_range_end', 0)
+
+                    for scene in scenes:
+                        # Scene belongs to Segment 1 if its scene_id is within SRT range
+                        if srt_start <= scene.scene_id <= srt_end:
+                            status.segment1_scenes.append(scene.scene_id)
+            except:
+                pass
+
+            # Determine videos_needed based on mode
+            if status.video_mode == "basic" or "basic" in status.video_mode.lower():
+                # BASIC mode: only videos for Segment 1 scenes that have images
+                for scene_id in status.segment1_scenes:
+                    if scene_id not in status.images_missing:  # Has image
+                        if scene_id in status.videos_missing:  # Needs video
+                            status.videos_needed.append(scene_id)
+            else:
+                # FULL mode: all scenes that have images need videos
+                for scene_id in status.videos_missing:
+                    if scene_id not in status.images_missing:  # Has image
+                        status.videos_needed.append(scene_id)
+
+            # Determine completion based on mode
+            if status.video_mode == "basic" or "basic" in status.video_mode.lower():
+                # BASIC: done when all Segment 1 videos are complete
+                seg1_videos_done = len([s for s in status.segment1_scenes if s not in status.videos_missing])
+                seg1_videos_needed = len(status.segment1_scenes)
+                videos_complete = (seg1_videos_done >= seg1_videos_needed) if seg1_videos_needed > 0 else True
+            else:
+                # FULL: done when all videos are complete
+                videos_complete = (status.videos_done == status.total_scenes)
 
             if status.images_done == status.total_scenes:
-                if status.videos_done == status.total_scenes:
+                if videos_complete:
                     status.current_step = "done"
                 else:
                     status.current_step = "video"
@@ -1368,8 +1498,9 @@ class VMManager:
             self.create_task(TaskType.EXCEL, project_code)
         elif status.current_step == "image" and status.images_missing:
             self._distribute_tasks(TaskType.IMAGE, project_code, status.images_missing)
-        elif status.current_step == "video" and status.videos_missing:
-            self._distribute_tasks(TaskType.VIDEO, project_code, status.videos_missing)
+        elif status.current_step == "video" and status.videos_needed:
+            # Use videos_needed which is filtered by video_mode (basic = Segment 1 only)
+            self._distribute_tasks(TaskType.VIDEO, project_code, status.videos_needed)
 
     def _distribute_tasks(self, task_type: TaskType, project_code: str, scenes: List[int]):
         n = self.num_chrome_workers
@@ -1504,6 +1635,117 @@ class VMManager:
             self.log(f"Error showing Chrome windows: {e}", "CHROME", "ERROR")
             return False
 
+    def get_cmd_windows(self) -> List[int]:
+        """Lấy danh sách handle của các cửa sổ CMD cho Chrome workers."""
+        if sys.platform != "win32":
+            return []
+
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            cmd_windows = []
+
+            def enum_windows_callback(hwnd, lParam):
+                if user32.IsWindowVisible(hwnd):
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        title = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, title, length + 1)
+                        # CMD windows have titles like "CHROME 1" or "CHROME 2"
+                        if "CHROME" in title.value.upper() and "CHROME" not in title.value.lower().replace("chrome ", ""):
+                            cmd_windows.append((hwnd, title.value))
+                return True
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+            user32.EnumWindows(WNDENUMPROC(enum_windows_callback), 0)
+
+            # Sort by title to ensure consistent ordering (CHROME 1 before CHROME 2)
+            cmd_windows.sort(key=lambda x: x[1])
+            return [hwnd for hwnd, _ in cmd_windows]
+        except Exception as e:
+            self.log(f"Error getting CMD windows: {e}", "CHROME", "ERROR")
+            return []
+
+    def hide_cmd_windows(self):
+        """Ẩn các cửa sổ CMD của Chrome workers."""
+        if sys.platform != "win32":
+            return False
+
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+
+            cmd_windows = self.get_cmd_windows()
+            for hwnd in cmd_windows:
+                # Move off-screen
+                user32.SetWindowPos(hwnd, 0, -3000, 100, 0, 0, 0x0001 | 0x0004)
+
+            if cmd_windows:
+                self.log(f"Hidden {len(cmd_windows)} CMD windows", "CHROME", "SUCCESS")
+            return True
+        except Exception as e:
+            self.log(f"Error hiding CMD windows: {e}", "CHROME", "ERROR")
+            return False
+
+    def show_chrome_with_cmd(self):
+        """
+        Show Chrome và CMD windows cạnh nhau.
+        Layout: [CMD 1][Chrome 1]
+                [CMD 2][Chrome 2]
+        CMD bên trái, Chrome bên phải (cùng hàng)
+        """
+        if sys.platform != "win32":
+            self.log("Window showing only supported on Windows", "CHROME", "WARN")
+            return False
+
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+
+            chrome_windows = self.get_chrome_windows()
+            cmd_windows = self.get_cmd_windows()
+
+            # Get screen size
+            screen_width = user32.GetSystemMetrics(0)
+            screen_height = user32.GetSystemMetrics(1)
+
+            # Sizes
+            cmd_width = 490
+            cmd_height = 450
+            chrome_width = 500
+            chrome_height = 450
+
+            # Position from right side: [CMD][Chrome]
+            x_cmd = screen_width - cmd_width - chrome_width - 20  # CMD bên trái
+            x_chrome = screen_width - chrome_width - 10  # Chrome bên phải
+            y_start = 50
+
+            # Position CMD windows (bên trái)
+            for i, hwnd in enumerate(cmd_windows):
+                y = y_start + (i * (cmd_height + 10))
+                if y + cmd_height > screen_height:
+                    y = y_start
+                user32.SetWindowPos(hwnd, 0, x_cmd, y, cmd_width, cmd_height, 0x0004)
+                # Restore if minimized
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+            # Position Chrome windows (bên phải, cùng hàng với CMD)
+            for i, hwnd in enumerate(chrome_windows):
+                y = y_start + (i * (chrome_height + 10))
+                if y + chrome_height > screen_height:
+                    y = y_start
+                user32.SetWindowPos(hwnd, 0, x_chrome, y, chrome_width, chrome_height, 0x0004)
+                # Restore if minimized
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+            self.log(f"Shown {len(cmd_windows)} CMD + {len(chrome_windows)} Chrome windows (side by side)", "CHROME", "SUCCESS")
+            return True
+        except Exception as e:
+            self.log(f"Error showing Chrome with CMD: {e}", "CHROME", "ERROR")
+            return False
+
     def toggle_chrome_visibility(self) -> bool:
         """
         Toggle hiển thị Chrome windows.
@@ -1572,14 +1814,19 @@ class VMManager:
             if sys.platform == "win32":
                 # Windows - start with cmd window
                 title = f"{w.worker_type.upper()} {w.worker_num or ''}"
-                cmd_args = f"python {script.name}"
+                cmd_args = f"python -X utf8 {script.name}"
                 if args:
                     cmd_args += f" {args}"
+
+                # Prepare environment with UTF-8 encoding for subprocess
+                worker_env = os.environ.copy()
+                worker_env['PYTHONIOENCODING'] = 'utf-8'
+                worker_env['PYTHONUTF8'] = '1'
 
                 if gui_mode:
                     # GUI mode - minimize CMD window, redirect output to log file
                     # Chrome will still open and be visible (can be hidden later with hide_chrome_windows)
-                    cmd_list = [sys.executable, str(script)]
+                    cmd_list = [sys.executable, '-X', 'utf8', str(script)]
                     if args:
                         cmd_list.extend(args.split())
 
@@ -1602,19 +1849,23 @@ class VMManager:
                         stdout=log_handle,
                         stderr=subprocess.STDOUT,
                         startupinfo=startupinfo,
-                        creationflags=subprocess.CREATE_NEW_CONSOLE
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        env=worker_env
                     )
                     w._log_handle = log_handle
                 else:
-                    # Normal mode - visible CMD window
-                    cmd = f'start "{title}" cmd /k "cd /d {TOOL_DIR} && {cmd_args}"'
-                    w.process = subprocess.Popen(cmd, shell=True, cwd=str(TOOL_DIR))
+                    # Normal mode - visible CMD window with UTF-8 code page
+                    cmd = f'start "{title}" cmd /k "chcp 65001 >nul && cd /d {TOOL_DIR} && {cmd_args}"'
+                    w.process = subprocess.Popen(cmd, shell=True, cwd=str(TOOL_DIR), env=worker_env)
             else:
                 # Linux/Mac
-                cmd_list = [sys.executable, str(script)]
+                worker_env = os.environ.copy()
+                worker_env['PYTHONIOENCODING'] = 'utf-8'
+                worker_env['PYTHONUTF8'] = '1'
+                cmd_list = [sys.executable, '-X', 'utf8', str(script)]
                 if args:
                     cmd_list.extend(args.split())
-                w.process = subprocess.Popen(cmd_list, cwd=str(TOOL_DIR))
+                w.process = subprocess.Popen(cmd_list, cwd=str(TOOL_DIR), env=worker_env)
 
             w.status = WorkerStatus.IDLE
             w.start_time = datetime.now()
@@ -1664,6 +1915,78 @@ class VMManager:
         w.last_restart_time = datetime.now()
         w.restart_count += 1
         self.log(f"{worker_id} restarted (count: {w.restart_count})", worker_id, "SUCCESS")
+
+    def check_and_auto_recover(self) -> bool:
+        """Check for connection errors and auto-recover if needed.
+
+        Returns True if recovery was triggered.
+        """
+        # Check each Chrome worker's recent logs for connection errors
+        error_threshold = 5  # Number of consecutive errors to trigger recovery
+
+        for worker_id in self.workers:
+            if not worker_id.startswith("chrome_"):
+                continue
+
+            logs = self.get_worker_log_file(worker_id, lines=20)
+            if not logs:
+                continue
+
+            # Count recent connection errors
+            connection_errors = 0
+            for line in logs[-10:]:  # Check last 10 lines
+                if "connection" in line.lower() and ("disconnected" in line.lower() or "lost" in line.lower()):
+                    connection_errors += 1
+                elif "RETRY" in line and connection_errors > 0:
+                    connection_errors += 1
+
+            if connection_errors >= error_threshold:
+                self.log(f"[AUTO-RECOVERY] Detected {connection_errors} connection errors in {worker_id}", "SYSTEM", "WARN")
+                self.log("[AUTO-RECOVERY] Killing all Chrome and restarting workers...", "SYSTEM", "WARN")
+
+                # Kill all Chrome
+                self.kill_all_chrome()
+                time.sleep(2)
+
+                # Restart all Chrome workers
+                for wid in list(self.workers.keys()):
+                    if wid.startswith("chrome_"):
+                        self.stop_worker(wid)
+
+                time.sleep(3)
+
+                for wid in list(self.workers.keys()):
+                    if wid.startswith("chrome_"):
+                        self.start_worker(wid, gui_mode=self.gui_mode)
+                        time.sleep(2)
+
+                self.log("[AUTO-RECOVERY] Chrome workers restarted!", "SYSTEM", "SUCCESS")
+                return True
+
+        return False
+
+    def restart_all_chrome(self):
+        """Restart all Chrome workers (kill Chrome first)."""
+        self.log("Restarting all Chrome workers...", "SYSTEM", "WARN")
+
+        # Kill all Chrome processes
+        self.kill_all_chrome()
+        time.sleep(2)
+
+        # Stop all Chrome workers
+        for wid in list(self.workers.keys()):
+            if wid.startswith("chrome_"):
+                self.stop_worker(wid)
+
+        time.sleep(3)
+
+        # Start all Chrome workers
+        for wid in list(self.workers.keys()):
+            if wid.startswith("chrome_"):
+                self.start_worker(wid, gui_mode=self.gui_mode)
+                time.sleep(2)
+
+        self.log("All Chrome workers restarted!", "SYSTEM", "SUCCESS")
 
     def start_all(self, gui_mode: bool = False):
         """Start all workers.

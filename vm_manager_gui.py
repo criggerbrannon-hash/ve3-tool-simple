@@ -37,12 +37,49 @@ from typing import Dict, Optional
 
 # Import VM Manager
 try:
-    from vm_manager import VMManager, WorkerStatus, TaskStatus, TaskType
+    from vm_manager import VMManager, WorkerStatus, TaskStatus, TaskType, SettingsManager
     VM_MANAGER_AVAILABLE = True
 except ImportError:
     VM_MANAGER_AVAILABLE = False
 
 TOOL_DIR = Path(__file__).parent
+
+
+def startup_cleanup():
+    """Clean up logs and cache on startup."""
+    import shutil
+
+    print("[STARTUP] Cleaning up...")
+
+    # 1. Clear old log files
+    log_dir = TOOL_DIR / ".agent" / "logs"
+    if log_dir.exists():
+        for log_file in log_dir.glob("*.log"):
+            try:
+                log_file.unlink()
+                print(f"  Deleted: {log_file.name}")
+            except:
+                pass
+
+    # 2. Clear __pycache__ directories
+    cache_count = 0
+    for cache_dir in TOOL_DIR.rglob("__pycache__"):
+        try:
+            shutil.rmtree(cache_dir)
+            cache_count += 1
+        except:
+            pass
+    if cache_count:
+        print(f"  Cleared {cache_count} __pycache__ directories")
+
+    # 3. Kill any orphan Chrome/Python processes (optional, safer not to do by default)
+    # subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
+
+    print("[STARTUP] Cleanup complete!")
+
+
+# Run cleanup on import
+startup_cleanup()
 
 
 class SettingsDialog(tk.Toplevel):
@@ -342,14 +379,16 @@ class SettingsDialog(tk.Toplevel):
 class ProjectDetailDialog(tk.Toplevel):
     """Dialog hiển thị chi tiết project với prompts và images."""
 
-    def __init__(self, parent, project_code: str, quality_checker):
+    def __init__(self, parent, project_code: str, quality_checker, manager=None):
         super().__init__(parent)
         self.title(f"Project: {project_code}")
-        self.geometry("1000x700")
+        self.geometry("1200x800")
 
         self.project_code = project_code
         self.quality_checker = quality_checker
+        self.manager = manager  # For getting worker status
         self._image_cache = {}  # Cache for loaded images
+        self._ref_images = []  # Keep references to prevent GC
 
         # Make modal
         self.transient(parent)
@@ -361,100 +400,209 @@ class ProjectDetailDialog(tk.Toplevel):
         self._auto_refresh()
 
     def _build_ui(self):
-        # Main container with panes
-        paned = ttk.PanedWindow(self, orient="horizontal")
-        paned.pack(fill="both", expand=True, padx=10, pady=10)
+        # ===== TOP: Worker Status Bar =====
+        status_frame = ttk.LabelFrame(self, text="Worker Status", padding=5)
+        status_frame.pack(fill="x", padx=10, pady=(10, 5))
+
+        # Chrome 1 status
+        c1_frame = ttk.Frame(status_frame)
+        c1_frame.pack(fill="x", pady=2)
+        ttk.Label(c1_frame, text="Chrome 1 (odd):", width=15, font=("Arial", 9, "bold")).pack(side="left")
+        self.chrome1_status_var = tk.StringVar(value="idle")
+        ttk.Label(c1_frame, textvariable=self.chrome1_status_var, width=60).pack(side="left")
+
+        # Chrome 2 status
+        c2_frame = ttk.Frame(status_frame)
+        c2_frame.pack(fill="x", pady=2)
+        ttk.Label(c2_frame, text="Chrome 2 (even):", width=15, font=("Arial", 9, "bold")).pack(side="left")
+        self.chrome2_status_var = tk.StringVar(value="idle")
+        ttk.Label(c2_frame, textvariable=self.chrome2_status_var, width=60).pack(side="left")
+
+        # ===== EXCEL WORKFLOW STATUS =====
+        workflow_frame = ttk.LabelFrame(self, text="Excel Workflow Status", padding=5)
+        workflow_frame.pack(fill="x", padx=10, pady=5)
+
+        # Row 1: SRT + Characters
+        row1 = ttk.Frame(workflow_frame)
+        row1.pack(fill="x", pady=2)
+
+        # SRT Status
+        ttk.Label(row1, text="SRT:", width=8).pack(side="left")
+        self.srt_status_var = tk.StringVar(value="...")
+        self.srt_status_label = ttk.Label(row1, textvariable=self.srt_status_var, width=12)
+        self.srt_status_label.pack(side="left")
+
+        ttk.Label(row1, text="  |  ").pack(side="left")
+
+        # Characters Status
+        ttk.Label(row1, text="Characters:", width=10).pack(side="left")
+        self.chars_status_var = tk.StringVar(value="...")
+        self.chars_status_label = ttk.Label(row1, textvariable=self.chars_status_var, width=25)
+        self.chars_status_label.pack(side="left")
+
+        ttk.Label(row1, text="  |  ").pack(side="left")
+
+        # NV Images
+        ttk.Label(row1, text="NV Images:", width=10).pack(side="left")
+        self.nv_count_var = tk.StringVar(value="...")
+        ttk.Label(row1, textvariable=self.nv_count_var, width=8).pack(side="left")
+
+        # Row 2: Prompts + Excel Status
+        row2 = ttk.Frame(workflow_frame)
+        row2.pack(fill="x", pady=2)
+
+        # Prompts Status
+        ttk.Label(row2, text="Prompts:", width=8).pack(side="left")
+        self.prompts_status_var = tk.StringVar(value="...")
+        self.prompts_status_label = ttk.Label(row2, textvariable=self.prompts_status_var, width=25)
+        self.prompts_status_label.pack(side="left")
+
+        ttk.Label(row2, text="  |  ").pack(side="left")
+
+        # Excel Overall Status
+        ttk.Label(row2, text="Excel Status:", width=12).pack(side="left")
+        self.excel_status_var = tk.StringVar(value="...")
+        self.excel_status_label = ttk.Label(row2, textvariable=self.excel_status_var, width=15,
+                                             font=("Arial", 9, "bold"))
+        self.excel_status_label.pack(side="left")
+
+        ttk.Label(row2, text="  |  ").pack(side="left")
+
+        # Current Step
+        ttk.Label(row2, text="Step:", width=5).pack(side="left")
+        self.current_step_var = tk.StringVar(value="...")
+        ttk.Label(row2, textvariable=self.current_step_var, width=10,
+                  font=("Arial", 9, "bold")).pack(side="left")
+
+        # Row 3: Video Mode + Segment 1 info
+        row3 = ttk.Frame(workflow_frame)
+        row3.pack(fill="x", pady=2)
+
+        # Video Mode
+        ttk.Label(row3, text="Video Mode:", width=11).pack(side="left")
+        self.video_mode_var = tk.StringVar(value="...")
+        self.video_mode_label = ttk.Label(row3, textvariable=self.video_mode_var, width=10,
+                                           font=("Arial", 9, "bold"))
+        self.video_mode_label.pack(side="left")
+
+        ttk.Label(row3, text="  |  ").pack(side="left")
+
+        # Segment 1 info
+        ttk.Label(row3, text="Seg.1 Scenes:", width=12).pack(side="left")
+        self.seg1_scenes_var = tk.StringVar(value="...")
+        ttk.Label(row3, textvariable=self.seg1_scenes_var, width=15).pack(side="left")
+
+        ttk.Label(row3, text="  |  ").pack(side="left")
+
+        # Videos Needed
+        ttk.Label(row3, text="Videos Need:", width=12).pack(side="left")
+        self.videos_need_var = tk.StringVar(value="...")
+        ttk.Label(row3, textvariable=self.videos_need_var, width=15).pack(side="left")
+
+        # ===== MAIN: Notebook with tabs =====
+        main_notebook = ttk.Notebook(self)
+        main_notebook.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # ----- Tab 1: Scenes Overview -----
+        scenes_tab = ttk.Frame(main_notebook, padding=5)
+        main_notebook.add(scenes_tab, text="Scenes")
+
+        scenes_paned = ttk.PanedWindow(scenes_tab, orient="horizontal")
+        scenes_paned.pack(fill="both", expand=True)
 
         # Left: Scene list
-        left_frame = ttk.Frame(paned)
-        paned.add(left_frame, weight=1)
+        left_frame = ttk.Frame(scenes_paned)
+        scenes_paned.add(left_frame, weight=1)
 
-        ttk.Label(left_frame, text="Scenes", font=("Arial", 11, "bold")).pack(anchor="w")
+        ttk.Label(left_frame, text="All Scenes", font=("Arial", 10, "bold")).pack(anchor="w")
 
-        # Scene listbox with scrollbar
         list_frame = ttk.Frame(left_frame)
         list_frame.pack(fill="both", expand=True, pady=5)
 
-        self.scene_listbox = tk.Listbox(list_frame, font=("Consolas", 10), selectmode="single")
+        self.scene_listbox = tk.Listbox(list_frame, font=("Consolas", 9), selectmode="single")
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.scene_listbox.yview)
         self.scene_listbox.configure(yscrollcommand=scrollbar.set)
-
         scrollbar.pack(side="right", fill="y")
         self.scene_listbox.pack(side="left", fill="both", expand=True)
-
         self.scene_listbox.bind("<<ListboxSelect>>", self._on_scene_select)
 
-        # Status summary
+        # Summary
         self.summary_var = tk.StringVar(value="Loading...")
-        ttk.Label(left_frame, textvariable=self.summary_var, wraplength=250).pack(anchor="w", pady=5)
+        ttk.Label(left_frame, textvariable=self.summary_var, font=("Consolas", 9)).pack(anchor="w", pady=5)
 
-        # Right: Detail view
-        right_frame = ttk.Frame(paned)
-        paned.add(right_frame, weight=2)
+        # Right: Detail + Preview
+        right_frame = ttk.Frame(scenes_paned)
+        scenes_paned.add(right_frame, weight=2)
 
         # Scene info
-        info_frame = ttk.LabelFrame(right_frame, text="Scene Details", padding=10)
-        info_frame.pack(fill="x", pady=(0, 10))
+        info_frame = ttk.LabelFrame(right_frame, text="Scene Details", padding=5)
+        info_frame.pack(fill="x", pady=(0, 5))
 
-        # Scene number
         row = ttk.Frame(info_frame)
         row.pack(fill="x")
-        ttk.Label(row, text="Scene:", width=12).pack(side="left")
+        ttk.Label(row, text="Scene:", width=10).pack(side="left")
         self.scene_num_var = tk.StringVar(value="-")
         ttk.Label(row, textvariable=self.scene_num_var, font=("Arial", 10, "bold")).pack(side="left")
-
-        # Timing
-        row = ttk.Frame(info_frame)
-        row.pack(fill="x")
-        ttk.Label(row, text="Timing:", width=12).pack(side="left")
+        ttk.Label(row, text="  Timing:").pack(side="left", padx=(20, 0))
         self.timing_var = tk.StringVar(value="-")
         ttk.Label(row, textvariable=self.timing_var).pack(side="left")
 
-        # Subtitle
         row = ttk.Frame(info_frame)
         row.pack(fill="x")
-        ttk.Label(row, text="Subtitle:", width=12).pack(side="left")
+        ttk.Label(row, text="Subtitle:", width=10).pack(side="left")
         self.subtitle_var = tk.StringVar(value="-")
-        ttk.Label(row, textvariable=self.subtitle_var, wraplength=400).pack(side="left")
+        ttk.Label(row, textvariable=self.subtitle_var, wraplength=500).pack(side="left")
 
-        # Prompts notebook
-        prompts_notebook = ttk.Notebook(right_frame)
-        prompts_notebook.pack(fill="both", expand=True)
-
-        # Image prompt tab
-        img_prompt_frame = ttk.Frame(prompts_notebook, padding=5)
-        prompts_notebook.add(img_prompt_frame, text="Image Prompt")
-
-        self.img_prompt_text = scrolledtext.ScrolledText(img_prompt_frame, height=6, font=("Consolas", 9),
+        # Prompt text
+        prompt_frame = ttk.LabelFrame(right_frame, text="Image Prompt", padding=5)
+        prompt_frame.pack(fill="x", pady=5)
+        self.img_prompt_text = scrolledtext.ScrolledText(prompt_frame, height=4, font=("Consolas", 8),
                                                           wrap="word", state="disabled")
         self.img_prompt_text.pack(fill="both", expand=True)
 
-        # Video prompt tab
-        vid_prompt_frame = ttk.Frame(prompts_notebook, padding=5)
-        prompts_notebook.add(vid_prompt_frame, text="Video Prompt")
-
-        self.vid_prompt_text = scrolledtext.ScrolledText(vid_prompt_frame, height=6, font=("Consolas", 9),
-                                                          wrap="word", state="disabled")
-        self.vid_prompt_text.pack(fill="both", expand=True)
-
-        # Image/Video preview frame
-        preview_frame = ttk.LabelFrame(right_frame, text="Preview", padding=10)
-        preview_frame.pack(fill="both", expand=True, pady=(10, 0))
-
-        # Image preview
-        self.image_label = ttk.Label(preview_frame, text="No image", anchor="center")
+        # Preview
+        preview_frame = ttk.LabelFrame(right_frame, text="Preview", padding=5)
+        preview_frame.pack(fill="both", expand=True)
+        self.image_label = ttk.Label(preview_frame, text="Select a scene", anchor="center")
         self.image_label.pack(fill="both", expand=True)
-
-        # Status label
         self.preview_status_var = tk.StringVar(value="")
         ttk.Label(preview_frame, textvariable=self.preview_status_var).pack(anchor="w")
 
-        # Bottom buttons
+        # ----- Tab 2: References (nv/) -----
+        refs_tab = ttk.Frame(main_notebook, padding=5)
+        main_notebook.add(refs_tab, text="References (nv/)")
+
+        # Canvas for thumbnails
+        refs_canvas_frame = ttk.Frame(refs_tab)
+        refs_canvas_frame.pack(fill="both", expand=True)
+
+        self.refs_canvas = tk.Canvas(refs_canvas_frame, bg="white")
+        refs_scrollbar = ttk.Scrollbar(refs_canvas_frame, orient="vertical", command=self.refs_canvas.yview)
+        self.refs_inner = ttk.Frame(self.refs_canvas)
+
+        self.refs_canvas.configure(yscrollcommand=refs_scrollbar.set)
+        refs_scrollbar.pack(side="right", fill="y")
+        self.refs_canvas.pack(side="left", fill="both", expand=True)
+        self.refs_canvas.create_window((0, 0), window=self.refs_inner, anchor="nw")
+        self.refs_inner.bind("<Configure>", lambda e: self.refs_canvas.configure(scrollregion=self.refs_canvas.bbox("all")))
+
+        # ----- Tab 3: Failed/Skipped -----
+        failed_tab = ttk.Frame(main_notebook, padding=5)
+        main_notebook.add(failed_tab, text="Failed/Skipped")
+
+        self.failed_text = scrolledtext.ScrolledText(failed_tab, font=("Consolas", 9), state="disabled")
+        self.failed_text.pack(fill="both", expand=True)
+
+        # Hidden video prompt (keep for compatibility)
+        self.vid_prompt_text = scrolledtext.ScrolledText(right_frame, height=1)
+
+        # ===== BOTTOM: Buttons =====
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", padx=10, pady=10)
 
         ttk.Button(btn_frame, text="Refresh", command=self._load_data).pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="Open Folder", command=self._open_folder).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Open IMG Folder", command=self._open_folder).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Open NV Folder", command=self._open_nv_folder).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side="right", padx=5)
 
     def _load_data(self):
@@ -463,6 +611,7 @@ class ProjectDetailDialog(tk.Toplevel):
             from modules.excel_manager import PromptWorkbook
 
             project_dir = Path(__file__).parent / "PROJECTS" / self.project_code
+            img_dir = project_dir / "img"
             excel_path = project_dir / f"{self.project_code}_prompts.xlsx"
 
             if not excel_path.exists():
@@ -475,16 +624,19 @@ class ProjectDetailDialog(tk.Toplevel):
             # Update listbox
             self.scene_listbox.delete(0, "end")
             for scene in self.scenes:
-                # Status icons
-                img_icon = "[v]" if scene.img_local_path and Path(scene.img_local_path).exists() else "○"
-                vid_icon = "[v]" if scene.video_local_path and Path(scene.video_local_path).exists() else "○"
+                scene_id = scene.scene_id
+                # Check actual files in img/ folder
+                actual_img = img_dir / f"{scene_id}.png"
+                img_exists = actual_img.exists()
+                vid_icon = "[v]" if scene.video_path and Path(scene.video_path).exists() else "○"
                 prompt_icon = "[v]" if scene.img_prompt else "○"
+                img_icon = "[v]" if img_exists else "○"
 
                 self.scene_listbox.insert("end",
-                    f"Scene {scene.scene_number:03d} │ P:{prompt_icon} I:{img_icon} V:{vid_icon}")
+                    f"Scene {scene_id:03d} │ P:{prompt_icon} I:{img_icon} V:{vid_icon}")
 
                 # Color based on status
-                if scene.img_local_path and Path(scene.img_local_path).exists():
+                if img_exists:
                     self.scene_listbox.itemconfig("end", fg="green")
                 elif not scene.img_prompt:
                     self.scene_listbox.itemconfig("end", fg="red")
@@ -495,9 +647,21 @@ class ProjectDetailDialog(tk.Toplevel):
                 f"Total: {status.total_scenes} scenes\n"
                 f"Prompts: {status.img_prompts_count}/{status.total_scenes}\n"
                 f"Images: {status.images_done}/{status.total_scenes}\n"
-                f"Videos: {status.videos_done}/{status.total_scenes}\n"
-                f"Status: {status.excel_status}"
+                f"Videos: {status.videos_done}/{status.total_scenes}"
             )
+
+            # Update Excel Workflow Status
+            self._update_workflow_status(status)
+
+            # Update worker status
+            self._update_worker_status()
+
+            # Load failed/skipped
+            self._load_failed_skipped()
+
+            # Load references only on first load
+            if not self._ref_images:
+                self._load_references()
 
         except Exception as e:
             self.summary_var.set(f"Error: {str(e)[:50]}")
@@ -515,9 +679,9 @@ class ProjectDetailDialog(tk.Toplevel):
         scene = self.scenes[idx]
 
         # Update info
-        self.scene_num_var.set(str(scene.scene_number))
-        self.timing_var.set(f"{scene.start_time} → {scene.end_time}")
-        self.subtitle_var.set(scene.subtitle or "-")
+        self.scene_num_var.set(str(scene.scene_id))
+        self.timing_var.set(f"{scene.srt_start} → {scene.srt_end}")
+        self.subtitle_var.set(scene.srt_text or "-")
 
         # Update prompts
         self.img_prompt_text.configure(state="normal")
@@ -535,18 +699,21 @@ class ProjectDetailDialog(tk.Toplevel):
 
     def _load_image_preview(self, scene):
         """Load and display image preview."""
-        img_path = scene.img_local_path
+        # Check actual img/{scene_id}.png path
+        img_dir = Path(__file__).parent / "PROJECTS" / self.project_code / "img"
+        img_path = img_dir / f"{scene.scene_id}.png"
 
-        if not img_path or not Path(img_path).exists():
+        if not img_path.exists():
             self.image_label.configure(image="", text="No image generated")
             self.preview_status_var.set("")
             return
 
+        img_path_str = str(img_path)
         try:
             # Check cache
-            if img_path in self._image_cache:
-                self.image_label.configure(image=self._image_cache[img_path], text="")
-                self.preview_status_var.set(f"Image: {Path(img_path).name}")
+            if img_path_str in self._image_cache:
+                self.image_label.configure(image=self._image_cache[img_path_str], text="")
+                self.preview_status_var.set(f"Image: {img_path.name}")
                 return
 
             # Load and resize image
@@ -561,13 +728,13 @@ class ProjectDetailDialog(tk.Toplevel):
             photo = ImageTk.PhotoImage(img)
 
             # Cache and display
-            self._image_cache[img_path] = photo
+            self._image_cache[img_path_str] = photo
             self.image_label.configure(image=photo, text="")
-            self.preview_status_var.set(f"Image: {Path(img_path).name}")
+            self.preview_status_var.set(f"Image: {img_path.name}")
 
         except ImportError:
             self.image_label.configure(image="", text="PIL not installed\n(pip install Pillow)")
-            self.preview_status_var.set(img_path)
+            self.preview_status_var.set(str(img_path))
         except Exception as e:
             self.image_label.configure(image="", text=f"Error: {str(e)[:30]}")
             self.preview_status_var.set("")
@@ -591,6 +758,212 @@ class ProjectDetailDialog(tk.Toplevel):
         if self.winfo_exists():
             self._load_data()
             self.after(5000, self._auto_refresh)
+
+    def _open_nv_folder(self):
+        """Open nv/ folder in file explorer."""
+        import subprocess
+        nv_dir = Path(__file__).parent / "PROJECTS" / self.project_code / "nv"
+        if not nv_dir.exists():
+            nv_dir.mkdir(parents=True, exist_ok=True)
+
+        if sys.platform == "win32":
+            subprocess.run(["explorer", str(nv_dir)])
+        else:
+            subprocess.run(["xdg-open", str(nv_dir)])
+
+    def _load_references(self):
+        """Load reference images from nv/ folder."""
+        # Clear existing
+        for widget in self.refs_inner.winfo_children():
+            widget.destroy()
+        self._ref_images.clear()
+
+        nv_dir = Path(__file__).parent / "PROJECTS" / self.project_code / "nv"
+        if not nv_dir.exists():
+            ttk.Label(self.refs_inner, text="No nv/ folder found").grid(row=0, column=0, pady=20)
+            return
+
+        # Find all images
+        images = list(nv_dir.glob("*.png")) + list(nv_dir.glob("*.jpg")) + list(nv_dir.glob("*.jpeg"))
+        if not images:
+            ttk.Label(self.refs_inner, text="No reference images in nv/ folder").grid(row=0, column=0, pady=20)
+            return
+
+        try:
+            from PIL import Image, ImageTk
+
+            cols = 4
+            thumb_size = (150, 150)
+
+            for idx, img_path in enumerate(sorted(images)):
+                row = idx // cols
+                col = idx % cols
+
+                # Create thumbnail frame
+                frame = ttk.Frame(self.refs_inner, padding=5)
+                frame.grid(row=row, column=col, padx=5, pady=5)
+
+                try:
+                    img = Image.open(img_path)
+                    img.thumbnail(thumb_size, Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._ref_images.append(photo)  # Keep reference
+
+                    lbl = ttk.Label(frame, image=photo)
+                    lbl.pack()
+                    ttk.Label(frame, text=img_path.name, font=("Arial", 8), wraplength=140).pack()
+                except Exception as e:
+                    ttk.Label(frame, text=f"Error: {img_path.name}").pack()
+
+        except ImportError:
+            ttk.Label(self.refs_inner, text="PIL not installed (pip install Pillow)").grid(row=0, column=0, pady=20)
+
+    def _load_failed_skipped(self):
+        """Load failed/skipped scenes from log."""
+        self.failed_text.configure(state="normal")
+        self.failed_text.delete("1.0", "end")
+
+        # Check for scenes without prompts or failed
+        failed_info = []
+
+        if hasattr(self, 'scenes') and self.scenes:
+            for scene in self.scenes:
+                scene_id = scene.scene_id
+                img_path = Path(__file__).parent / "PROJECTS" / self.project_code / "img" / f"{scene_id}.png"
+
+                if not scene.img_prompt:
+                    failed_info.append(f"Scene {scene_id:03d}: MISSING PROMPT")
+                elif not img_path.exists():
+                    # Check if it was skipped or failed
+                    failed_info.append(f"Scene {scene_id:03d}: Not generated yet")
+
+        if failed_info:
+            self.failed_text.insert("1.0", "\n".join(failed_info))
+        else:
+            self.failed_text.insert("1.0", "No failed or skipped scenes!")
+
+        self.failed_text.configure(state="disabled")
+
+    def _update_worker_status(self):
+        """Update Chrome 1/2 status from manager."""
+        if not self.manager:
+            self.chrome1_status_var.set("(No manager)")
+            self.chrome2_status_var.set("(No manager)")
+            return
+
+        try:
+            # Get status from manager
+            chrome1_status = "idle"
+            chrome2_status = "idle"
+
+            # Check logs for current work
+            log_path = Path(__file__).parent / "chrome_log.txt"
+            if log_path.exists():
+                try:
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()[-50:]  # Last 50 lines
+
+                    for line in reversed(lines):
+                        if "[Chrome1]" in line or "[Worker1]" in line:
+                            if "Scene" in line or "scene" in line:
+                                # Extract scene info
+                                chrome1_status = line.strip()[-80:]
+                                break
+                        if "[Chrome2]" in line or "[Worker2]" in line:
+                            if "Scene" in line or "scene" in line:
+                                chrome2_status = line.strip()[-80:]
+                                break
+                except:
+                    pass
+
+            self.chrome1_status_var.set(chrome1_status)
+            self.chrome2_status_var.set(chrome2_status)
+
+        except Exception as e:
+            self.chrome1_status_var.set(f"Error: {str(e)[:30]}")
+            self.chrome2_status_var.set("")
+
+    def _update_workflow_status(self, status):
+        """Update the Excel workflow status display."""
+        # SRT Status
+        if status.srt_exists:
+            self.srt_status_var.set(f"OK ({status.srt_scene_count})")
+        else:
+            self.srt_status_var.set("MISSING")
+
+        # Characters Status
+        if status.characters_count == 0:
+            self.chars_status_var.set("No characters")
+        else:
+            refs = status.characters_with_ref
+            total = status.characters_count
+            if refs == total:
+                self.chars_status_var.set(f"OK ({total} chars, all refs)")
+            elif refs > 0:
+                missing = len(status.characters_missing_ref)
+                self.chars_status_var.set(f"{refs}/{total} refs (miss: {missing})")
+            else:
+                self.chars_status_var.set(f"{total} chars, NO refs!")
+
+        # NV Images count
+        self.nv_count_var.set(str(status.nv_images_count))
+
+        # Prompts Status
+        prompts = status.img_prompts_count
+        total = status.total_scenes
+        fallback = status.fallback_prompts
+        if prompts == 0:
+            self.prompts_status_var.set("No prompts")
+        elif prompts == total and fallback == 0:
+            self.prompts_status_var.set(f"OK ({prompts}/{total})")
+        elif fallback > 0:
+            self.prompts_status_var.set(f"{prompts}/{total} ({fallback} FALLBACK)")
+        else:
+            missing = len(status.missing_img_prompts)
+            self.prompts_status_var.set(f"{prompts}/{total} (miss: {missing})")
+
+        # Excel Overall Status
+        excel_status_map = {
+            "none": "NO FILE",
+            "empty": "EMPTY",
+            "mismatch": "MISMATCH!",
+            "fallback": "HAS FALLBACK",
+            "partial": "PARTIAL",
+            "complete": "COMPLETE"
+        }
+        self.excel_status_var.set(excel_status_map.get(status.excel_status, status.excel_status))
+
+        # Current Step
+        step_map = {
+            "excel": "EXCEL",
+            "image": "IMAGE",
+            "video": "VIDEO",
+            "done": "DONE"
+        }
+        self.current_step_var.set(step_map.get(status.current_step, status.current_step))
+
+        # Video Mode
+        video_mode = status.video_mode.upper() if status.video_mode else "FULL"
+        self.video_mode_var.set(video_mode)
+
+        # Segment 1 info
+        seg1_count = len(status.segment1_scenes)
+        if seg1_count > 0:
+            self.seg1_scenes_var.set(f"1-{status.segment1_end_srt} ({seg1_count} scenes)")
+        else:
+            self.seg1_scenes_var.set("N/A")
+
+        # Videos Needed based on mode
+        videos_need = len(status.videos_needed)
+        videos_done = status.videos_done
+        if status.video_mode == "basic" or "basic" in (status.video_mode or "").lower():
+            # BASIC mode: only Segment 1 videos
+            total_videos = seg1_count
+            self.videos_need_var.set(f"{videos_need}/{total_videos} (Seg.1)")
+        else:
+            # FULL mode: all videos
+            total_videos = status.total_scenes
+            self.videos_need_var.set(f"{videos_need}/{total_videos}")
 
 
 class WorkerCard(ttk.LabelFrame):
@@ -840,8 +1213,9 @@ class ChromeLogWindow(tk.Toplevel):
 def _cap_build_ui(self):
     header = ttk.Frame(self)
     header.pack(fill="x")
+    # Note: For Excel worker, "Img/Pmt" shows Prompts, "Vid/Chr" shows Characters with refs
     cols = [("Worker", 10), ("Status", 8), ("Project", 12), ("Pending", 7),
-            ("Images", 10), ("Videos", 10), ("Current Task", 28), ("Last Result", 12)]
+            ("Img/Pmt", 10), ("Vid/Chr", 10), ("Current Task", 28), ("Last Result", 12)]
     for col_name, width in cols:
         ttk.Label(header, text=col_name, width=width, font=("Arial", 9, "bold")).pack(side="left", padx=1)
     ttk.Separator(self, orient="horizontal").pack(fill="x", pady=5)
@@ -1108,6 +1482,9 @@ class VMManagerGUI:
         self.scan_btn = ttk.Button(row2, text="[Scan] Projects", command=self._scan_projects, width=15)
         self.scan_btn.pack(side="left", padx=5)
 
+        self.update_btn = ttk.Button(row2, text="[Update] Code", command=self._update_code, width=14)
+        self.update_btn.pack(side="left", padx=5)
+
         ttk.Separator(row2, orient="vertical").pack(side="left", fill="y", padx=10)
 
         # Chrome visibility toggle buttons
@@ -1116,6 +1493,9 @@ class VMManagerGUI:
 
         self.show_chrome_btn = ttk.Button(row2, text="[Show] Chrome", command=self._show_chrome, width=14)
         self.show_chrome_btn.pack(side="left", padx=5)
+
+        self.restart_chrome_btn = ttk.Button(row2, text="[Fix] Chrome", command=self._restart_all_chrome, width=12)
+        self.restart_chrome_btn.pack(side="left", padx=5)
 
         ttk.Separator(row2, orient="vertical").pack(side="left", fill="y", padx=10)
 
@@ -1320,6 +1700,48 @@ class VMManagerGUI:
         self.scenes_tree.tag_configure("pending", background="#FFFFFF")  # White
         self.scenes_tree.tag_configure("no_prompt", background="#FFCCCC")  # Light red
 
+        # References tab - show character/location images from nv/ folder
+        refs_frame = ttk.Frame(self.logs_notebook, padding=5)
+        self.logs_notebook.add(refs_frame, text="References")
+
+        # Project selector for references
+        refs_selector_frame = ttk.Frame(refs_frame)
+        refs_selector_frame.pack(fill="x", pady=(0, 5))
+
+        ttk.Label(refs_selector_frame, text="Project:").pack(side="left", padx=(0, 5))
+        self.refs_project_var = tk.StringVar(value="")
+        self.refs_project_combo = ttk.Combobox(refs_selector_frame, textvariable=self.refs_project_var,
+                                                width=20, state="readonly")
+        self.refs_project_combo.pack(side="left", padx=(0, 10))
+        self.refs_project_combo.bind("<<ComboboxSelected>>", self._on_refs_project_change)
+
+        ttk.Button(refs_selector_frame, text="Refresh", command=self._refresh_refs, width=10).pack(side="left")
+        ttk.Button(refs_selector_frame, text="Open NV Folder", command=self._open_nv_folder, width=14).pack(side="left", padx=5)
+        ttk.Button(refs_selector_frame, text="Open IMG Folder", command=self._open_img_folder, width=14).pack(side="left", padx=5)
+
+        # Reference summary
+        self.refs_summary_var = tk.StringVar(value="Select a project to view references")
+        ttk.Label(refs_selector_frame, textvariable=self.refs_summary_var).pack(side="right", padx=10)
+
+        # References canvas for thumbnails
+        refs_canvas_frame = ttk.Frame(refs_frame)
+        refs_canvas_frame.pack(fill="both", expand=True)
+
+        self.refs_canvas = tk.Canvas(refs_canvas_frame, bg="white")
+        refs_scrollbar = ttk.Scrollbar(refs_canvas_frame, orient="vertical", command=self.refs_canvas.yview)
+        self.refs_inner_frame = ttk.Frame(self.refs_canvas)
+
+        self.refs_canvas.configure(yscrollcommand=refs_scrollbar.set)
+        refs_scrollbar.pack(side="right", fill="y")
+        self.refs_canvas.pack(side="left", fill="both", expand=True)
+        self.refs_canvas.create_window((0, 0), window=self.refs_inner_frame, anchor="nw")
+
+        self.refs_inner_frame.bind("<Configure>",
+            lambda e: self.refs_canvas.configure(scrollregion=self.refs_canvas.bbox("all")))
+
+        # Store image references to prevent garbage collection
+        self._ref_images = []
+
         # Track last log positions for incremental updates
         self._last_log_positions = {}
 
@@ -1346,13 +1768,28 @@ class VMManagerGUI:
     def _on_excel_mode_change(self, event=None):
         mode = self.excel_mode_var.get()
         self._log(f"Excel mode changed to: {mode}")
-        if self.manager:
-            self.manager.settings.excel_mode = mode
+        # Save immediately (even without manager)
+        try:
+            settings = SettingsManager()
+            settings.excel_mode = mode
+            self._log(f"Excel mode saved: {mode}")
+            if self.manager:
+                self.manager.settings = settings
+        except Exception as e:
+            self._log(f"Error saving excel_mode: {e}")
 
     def _on_video_mode_change(self, event=None):
         mode = self.video_mode_var.get()
         self._log(f"Video mode changed to: {mode}")
-        # TODO: Update video mode in settings
+        # Save immediately (even without manager)
+        try:
+            settings = SettingsManager()
+            settings.video_mode = mode
+            self._log(f"Video mode saved: {mode}")
+            if self.manager:
+                self.manager.settings = settings
+        except Exception as e:
+            self._log(f"Error saving video_mode: {e}")
 
     def _on_chrome_count_change(self):
         try:
@@ -1376,6 +1813,11 @@ class VMManagerGUI:
             worker_list = ["all", "excel"] + [f"chrome_{i}" for i in range(1, chrome_count + 1)]
             self.log_worker_combo.configure(values=worker_list)
 
+        # Sync settings from GUI to manager
+        self.manager.settings.excel_mode = self.excel_mode_var.get()
+        self.manager.settings.video_mode = self.video_mode_var.get()
+        self._log(f"Mode: Excel={self.manager.settings.excel_mode}, Video={self.manager.settings.video_mode}")
+
         self.running = True
         self._log("Starting all workers...")
 
@@ -1387,14 +1829,12 @@ class VMManagerGUI:
 
         threading.Thread(target=start_thread, daemon=True).start()
 
-        # Auto-position Chrome windows after 10 seconds (give Chrome time to open)
+        # Auto-position Chrome + CMD windows after 10 seconds (give Chrome time to open)
         def auto_position_chrome():
             import time
             time.sleep(10)  # Wait for Chrome to open
             if self.manager:
-                self.manager.show_chrome_windows()  # Position on right side
-                # Open log window
-                self.root.after(0, lambda: self._show_chrome())
+                self.manager.show_chrome_with_cmd()  # Position Chrome + CMD side by side
 
         threading.Thread(target=auto_position_chrome, daemon=True).start()
 
@@ -1426,6 +1866,14 @@ class VMManagerGUI:
             self._log(f"Stopping {worker_id}...")
             threading.Thread(target=lambda: self.manager.stop_worker(worker_id), daemon=True).start()
 
+    def _restart_all_chrome(self):
+        """Restart all Chrome workers (fix connection issues)."""
+        if self.manager:
+            self._log("[Fix] Restarting all Chrome workers...")
+            threading.Thread(target=self.manager.restart_all_chrome, daemon=True).start()
+        else:
+            messagebox.showwarning("Warning", "Manager not started")
+
     def _rotate_ipv6(self):
         """Rotate IPv6."""
         if self.manager and self.manager.ipv6_manager:
@@ -1435,35 +1883,21 @@ class VMManagerGUI:
             messagebox.showwarning("Warning", "IPv6 Manager not available")
 
     def _hide_chrome(self):
-        """Hide Chrome windows (move off-screen) and close log window."""
+        """Hide Chrome windows (move off-screen)."""
         if self.manager:
-            self._log("Hiding Chrome windows...")
+            self._log("Hiding Chrome + CMD windows...")
             self.manager.hide_chrome_windows()
-            # Close log window if open
-            if hasattr(self, 'chrome_log_window') and self.chrome_log_window:
-                try:
-                    self.chrome_log_window.destroy()
-                except:
-                    pass
-                self.chrome_log_window = None
-            self._log("Chrome hidden")
+            self.manager.hide_cmd_windows()
+            self._log("Chrome + CMD hidden")
         else:
             messagebox.showwarning("Warning", "Manager not started")
 
     def _show_chrome(self):
-        """Show Chrome windows on right side + open log window."""
+        """Show Chrome windows + CMD windows side by side on right."""
         if self.manager:
-            self._log("Showing Chrome windows (right side)...")
-            self.manager.show_chrome_windows()
-            # Open Chrome log window
-            if not hasattr(self, 'chrome_log_window') or not self.chrome_log_window:
-                self.chrome_log_window = ChromeLogWindow(self.root, self.manager)
-            else:
-                try:
-                    self.chrome_log_window.lift()
-                except:
-                    self.chrome_log_window = ChromeLogWindow(self.root, self.manager)
-            self._log("Chrome shown with logs")
+            self._log("Showing Chrome + CMD windows (right side)...")
+            self.manager.show_chrome_with_cmd()
+            self._log("Chrome + CMD shown side by side")
         else:
             messagebox.showwarning("Warning", "Manager not started")
 
@@ -1473,6 +1907,48 @@ class VMManagerGUI:
             projects = self.manager.scan_projects()
             self._log(f"Found {len(projects)} projects")
             self._update_projects()
+
+    def _update_code(self):
+        """Update code from git and restart."""
+        import subprocess
+
+        # Confirm with user
+        if self.running:
+            if not messagebox.askyesno("Update", "Workers are running. Stop them and update?"):
+                return
+            self._stop_all()
+            time.sleep(2)
+
+        self._log("Updating code from git...")
+        self.update_btn.configure(state="disabled")
+
+        def do_update():
+            try:
+                # Run UPDATE.py
+                update_script = TOOL_DIR / "UPDATE.py"
+                if update_script.exists():
+                    result = subprocess.run(
+                        [sys.executable, str(update_script)],
+                        cwd=str(TOOL_DIR),
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    if result.returncode == 0:
+                        self._log("[OK] Update complete! Please restart the application.")
+                        messagebox.showinfo("Update", "Update complete!\n\nPlease close and restart vm_manager_gui.py")
+                    else:
+                        self._log(f"[ERROR] Update failed: {result.stderr[:200]}")
+                else:
+                    self._log("[ERROR] UPDATE.py not found")
+            except subprocess.TimeoutExpired:
+                self._log("[ERROR] Update timed out")
+            except Exception as e:
+                self._log(f"[ERROR] Update error: {e}")
+            finally:
+                self.update_btn.configure(state="normal")
+
+        threading.Thread(target=do_update, daemon=True).start()
 
     def _open_settings(self):
         """Open settings dialog."""
@@ -1498,6 +1974,12 @@ class VMManagerGUI:
                 # Update UI
                 self.chrome_count_var.set(str(self.manager.settings.chrome_count))
                 self.excel_mode_var.set(self.manager.settings.excel_mode)
+                # Load video_mode - convert to display format
+                vm = self.manager.settings.video_mode
+                if vm == "basic":
+                    self.video_mode_var.set("basic (8s)")
+                else:
+                    self.video_mode_var.set("full")
                 self._create_worker_cards(self.manager.settings.chrome_count)
 
     # ================================================================================
@@ -1613,6 +2095,7 @@ class VMManagerGUI:
 
             project_dir = Path(__file__).parent / "PROJECTS" / project_code
             excel_path = project_dir / f"{project_code}_prompts.xlsx"
+            img_dir = project_dir / "img"
 
             if not excel_path.exists():
                 self.scene_summary_var.set(f"Excel not found: {project_code}")
@@ -1630,6 +2113,10 @@ class VMManagerGUI:
             images_done = 0
             videos_done = 0
 
+            # Count prompts for odd/even (Chrome 1 = odd, Chrome 2 = even)
+            chrome1_prompts = 0  # Odd scenes
+            chrome2_prompts = 0  # Even scenes
+
             # Get current working scene from worker details
             current_scenes = set()
             if self.manager:
@@ -1641,21 +2128,37 @@ class VMManagerGUI:
                             current_scenes.add(str(current_scene))
 
             for scene in scenes:
+                scene_id = scene.scene_id
+
+                # Check actual files in img/ folder instead of Excel path
+                img_file = img_dir / f"{scene_id}.png"
+                img_file_jpg = img_dir / f"{scene_id}.jpg"
+                video_file = img_dir / f"{scene_id}.mp4"
+
+                img_exists = img_file.exists() or img_file_jpg.exists()
+                video_exists = video_file.exists()
+
                 # Status checks
                 has_prompt = "[v]" if scene.img_prompt else "-"
-                has_image = "[v]" if scene.img_local_path and Path(scene.img_local_path).exists() else "-"
-                has_video = "[v]" if scene.video_local_path and Path(scene.video_local_path).exists() else "-"
+                has_image = "[v]" if img_exists else "-"
+                has_video = "[v]" if video_exists else "-"
 
                 # Count stats
                 if scene.img_prompt:
                     prompts_done += 1
-                if scene.img_local_path and Path(scene.img_local_path).exists():
+                    # Count by worker (odd = Chrome 1, even = Chrome 2)
+                    if scene_id % 2 == 1:
+                        chrome1_prompts += 1
+                    else:
+                        chrome2_prompts += 1
+
+                if img_exists:
                     images_done += 1
-                if scene.video_local_path and Path(scene.video_local_path).exists():
+                if video_exists:
                     videos_done += 1
 
                 # Determine row status/tag
-                scene_num_str = str(scene.scene_number)
+                scene_num_str = str(scene_id)
                 if scene_num_str in current_scenes:
                     status = "WORKING"
                     tag = "working"
@@ -1673,12 +2176,12 @@ class VMManagerGUI:
                     tag = "no_prompt"
 
                 # Truncate subtitle
-                subtitle = (scene.subtitle or "")[:40]
-                if len(scene.subtitle or "") > 40:
+                subtitle = (scene.srt_text or "")[:40]
+                if len(scene.srt_text or "") > 40:
                     subtitle += "..."
 
                 self.scenes_tree.insert("", "end", values=(
-                    scene.scene_number,
+                    scene_id,
                     subtitle,
                     has_prompt,
                     has_image,
@@ -1686,10 +2189,11 @@ class VMManagerGUI:
                     status
                 ), tags=(tag,))
 
-            # Update summary
+            # Update summary with worker split info
             total = len(scenes)
             self.scene_summary_var.set(
-                f"Total: {total} | Prompts: {prompts_done} | Images: {images_done} | Videos: {videos_done}"
+                f"Total: {total} | Prompts: {prompts_done} | Images: {images_done} | Videos: {videos_done} | "
+                f"C1(odd): {chrome1_prompts} | C2(even): {chrome2_prompts}"
             )
 
         except Exception as e:
@@ -1723,6 +2227,162 @@ class VMManagerGUI:
             pass
 
     # ================================================================================
+    # References Tab Handling
+    # ================================================================================
+
+    def _on_refs_project_change(self, event=None):
+        """Handle project selection change in references tab."""
+        self._refresh_refs()
+
+    def _refresh_refs(self):
+        """Refresh the references gallery for selected project."""
+        project_code = self.refs_project_var.get()
+        if not project_code:
+            self.refs_summary_var.set("Select a project to view references")
+            return
+
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            self.refs_summary_var.set("PIL not installed - cannot show thumbnails")
+            return
+
+        project_dir = TOOL_DIR / "PROJECTS" / project_code
+        nv_dir = project_dir / "nv"
+        img_dir = project_dir / "img"
+
+        # Clear existing thumbnails
+        for widget in self.refs_inner_frame.winfo_children():
+            widget.destroy()
+        self._ref_images.clear()
+
+        # Get reference images from nv/ folder
+        ref_files = []
+        if nv_dir.exists():
+            ref_files = list(nv_dir.glob("*.png")) + list(nv_dir.glob("*.jpg"))
+
+        # Get generated images from img/ folder
+        gen_files = []
+        if img_dir.exists():
+            gen_files = list(img_dir.glob("*.png")) + list(img_dir.glob("*.jpg"))
+            gen_files = [f for f in gen_files if not f.stem.endswith('_video')]  # Exclude video frames
+
+        self.refs_summary_var.set(f"References: {len(ref_files)} | Generated: {len(gen_files)}")
+
+        # Create sections
+        row = 0
+
+        # NV/References section
+        if ref_files:
+            ttk.Label(self.refs_inner_frame, text="Reference Images (nv/)",
+                      font=("Arial", 10, "bold")).grid(row=row, column=0, columnspan=6, sticky="w", pady=(5, 2))
+            row += 1
+
+            col = 0
+            for img_path in sorted(ref_files):
+                try:
+                    img = Image.open(img_path)
+                    img.thumbnail((100, 100))
+                    photo = ImageTk.PhotoImage(img)
+                    self._ref_images.append(photo)
+
+                    frame = ttk.Frame(self.refs_inner_frame)
+                    frame.grid(row=row, column=col, padx=5, pady=5)
+
+                    label = ttk.Label(frame, image=photo)
+                    label.pack()
+                    ttk.Label(frame, text=img_path.stem, font=("Arial", 8)).pack()
+
+                    col += 1
+                    if col >= 6:
+                        col = 0
+                        row += 1
+                except Exception:
+                    pass
+            row += 1
+
+        # Generated Images section
+        if gen_files:
+            ttk.Label(self.refs_inner_frame, text="Generated Images (img/)",
+                      font=("Arial", 10, "bold")).grid(row=row, column=0, columnspan=6, sticky="w", pady=(10, 2))
+            row += 1
+
+            col = 0
+            for img_path in sorted(gen_files, key=lambda x: int(x.stem) if x.stem.isdigit() else 999):
+                try:
+                    img = Image.open(img_path)
+                    img.thumbnail((100, 100))
+                    photo = ImageTk.PhotoImage(img)
+                    self._ref_images.append(photo)
+
+                    frame = ttk.Frame(self.refs_inner_frame)
+                    frame.grid(row=row, column=col, padx=5, pady=5)
+
+                    label = ttk.Label(frame, image=photo)
+                    label.pack()
+                    ttk.Label(frame, text=f"Scene {img_path.stem}", font=("Arial", 8)).pack()
+
+                    col += 1
+                    if col >= 6:
+                        col = 0
+                        row += 1
+                except Exception:
+                    pass
+
+        if not ref_files and not gen_files:
+            ttk.Label(self.refs_inner_frame, text="No images found",
+                      font=("Arial", 10)).grid(row=0, column=0, pady=20)
+
+    def _open_nv_folder(self):
+        """Open the nv/ folder in file explorer."""
+        import subprocess
+        project_code = self.refs_project_var.get()
+        if not project_code:
+            messagebox.showwarning("Warning", "Select a project first")
+            return
+
+        nv_dir = TOOL_DIR / "PROJECTS" / project_code / "nv"
+        if not nv_dir.exists():
+            nv_dir.mkdir(parents=True, exist_ok=True)
+
+        if sys.platform == "win32":
+            subprocess.run(["explorer", str(nv_dir)])
+        else:
+            subprocess.run(["xdg-open", str(nv_dir)])
+
+    def _open_img_folder(self):
+        """Open the img/ folder in file explorer."""
+        import subprocess
+        project_code = self.refs_project_var.get()
+        if not project_code:
+            messagebox.showwarning("Warning", "Select a project first")
+            return
+
+        img_dir = TOOL_DIR / "PROJECTS" / project_code / "img"
+        if not img_dir.exists():
+            img_dir.mkdir(parents=True, exist_ok=True)
+
+        if sys.platform == "win32":
+            subprocess.run(["explorer", str(img_dir)])
+        else:
+            subprocess.run(["xdg-open", str(img_dir)])
+
+    def _update_refs_project_list(self):
+        """Update the project list in references combo."""
+        if not self.manager:
+            return
+
+        try:
+            projects = list(self.manager.quality_checker.project_cache.keys())
+            if projects:
+                current = self.refs_project_var.get()
+                self.refs_project_combo["values"] = projects
+                if current not in projects and projects:
+                    self.refs_project_var.set(projects[0])
+        except:
+            pass
+
+    # ================================================================================
     # Update Loop
     # ================================================================================
 
@@ -1736,7 +2396,20 @@ class VMManagerGUI:
         self._update_ipv6_status()
         self._update_worker_logs_incremental()
         self._update_scene_project_list()  # Update scenes project combo
+        self._update_refs_project_list()  # Update references project combo
         self._update_scenes_if_active()  # Auto-refresh scenes tab
+
+        # Auto-recovery check every 10 seconds (20 x 500ms)
+        if not hasattr(self, '_recovery_counter'):
+            self._recovery_counter = 0
+        self._recovery_counter += 1
+        if self._recovery_counter >= 20 and self.running and self.manager:
+            self._recovery_counter = 0
+            try:
+                if self.manager.check_and_auto_recover():
+                    self._log("[AUTO-RECOVERY] Chrome workers restarted due to connection errors")
+            except Exception as e:
+                pass  # Ignore recovery errors
 
         # Schedule next update - 500ms for real-time feel
         self.root.after(500, self._update_loop)
@@ -1775,16 +2448,59 @@ class VMManagerGUI:
                 try:
                     # Get project status from quality checker
                     status = self.manager.quality_checker.get_project_status(project_code)
-                    images_done = status.images_done
-                    images_total = status.total_scenes
-                    videos_done = status.videos_done
-                    videos_total = status.total_scenes
 
-                    # Current task from details
-                    current_scene = details.get("current_scene", 0)
-                    if current_scene > 0:
-                        current_task = f"Scene {current_scene}/{status.total_scenes}"
+                    # Calculate correct counts based on worker type
+                    # Chrome 1 = odd scenes (1,3,5...), Chrome 2 = even scenes (2,4,6...)
+                    if wid == "chrome_1":
+                        # Count only odd scenes
+                        worker_total = (status.total_scenes + 1) // 2  # Odd count
+                        worker_images = len([s for s in status.images_missing if s % 2 == 0])  # Missing even = done odd
+                        images_total = worker_total
+                        images_done = worker_total - len([s for s in status.images_missing if s % 2 == 1])
+                        videos_total = worker_total
+                        videos_done = worker_total - len([s for s in status.videos_missing if s % 2 == 1])
+                    elif wid == "chrome_2":
+                        # Count only even scenes
+                        worker_total = status.total_scenes // 2  # Even count
+                        images_total = worker_total
+                        images_done = worker_total - len([s for s in status.images_missing if s % 2 == 0])
+                        videos_total = worker_total
+                        videos_done = worker_total - len([s for s in status.videos_missing if s % 2 == 0])
+                    elif wid == "excel":
+                        # Excel worker - show prompts done / total (use Images column for Prompts)
+                        images_done = status.img_prompts_count
+                        images_total = status.total_scenes
+                        # Use Videos column for Characters status
+                        videos_done = status.characters_with_ref
+                        videos_total = status.characters_count
+                        # Show detailed Excel-specific status
+                        if status.excel_status == "complete":
+                            current_task = "READY - All prompts OK"
+                        elif status.excel_status == "fallback":
+                            current_task = f"FALLBACK: {status.fallback_prompts} need fix"
+                        elif status.excel_status == "partial":
+                            missing = len(status.missing_img_prompts)
+                            current_task = f"PARTIAL: miss {missing} prompts"
+                        elif status.excel_status == "mismatch":
+                            current_task = f"MISMATCH: SRT={status.srt_scene_count} Excel={status.excel_scene_count}"
+                        elif status.excel_status == "empty":
+                            current_task = "EMPTY - No prompts"
+                        elif status.excel_status == "none":
+                            current_task = "NO FILE - Create Excel"
+                        else:
+                            current_task = status.excel_status or "Scanning..."
                     else:
+                        # Other workers - show total
+                        images_done = status.images_done
+                        images_total = status.total_scenes
+                        videos_done = status.videos_done
+                        videos_total = status.total_scenes
+
+                    # Current task from details (override for Chrome)
+                    current_scene = details.get("current_scene", 0)
+                    if wid.startswith("chrome_") and current_scene > 0:
+                        current_task = f"Scene {current_scene}/{status.total_scenes}"
+                    elif not current_task:
                         current_task = details.get("current_task", "") or status.current_step
                 except:
                     pass
