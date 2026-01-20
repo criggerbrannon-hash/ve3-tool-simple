@@ -409,17 +409,42 @@ class PromptWorkbook:
     def load_or_create(self) -> "PromptWorkbook":
         """
         Load file Excel nếu tồn tại, hoặc tạo mới nếu chưa có.
-        
+        Nếu file bị hỏng (corrupt), sẽ backup và tạo mới.
+
         Returns:
             self để hỗ trợ method chaining
         """
         if self.path.exists():
             self.logger.info(f"Loading existing Excel file: {self.path}")
-            self.workbook = load_workbook(self.path)
+            try:
+                self.workbook = load_workbook(self.path)
+            except Exception as e:
+                # File bị hỏng (corrupt) - backup và tạo mới
+                self.logger.warning(f"Excel file is corrupted: {e}")
+                self.logger.info("Backing up corrupted file and creating new one...")
+
+                # Backup file bị hỏng
+                import shutil
+                from datetime import datetime
+                backup_name = f"{self.path.stem}_corrupted_{datetime.now().strftime('%Y%m%d_%H%M%S')}{self.path.suffix}"
+                backup_path = self.path.parent / backup_name
+                try:
+                    shutil.move(str(self.path), str(backup_path))
+                    self.logger.info(f"Corrupted file backed up to: {backup_path}")
+                except Exception as backup_err:
+                    self.logger.error(f"Failed to backup corrupted file: {backup_err}")
+                    # Xóa file hỏng nếu không backup được
+                    try:
+                        self.path.unlink()
+                    except:
+                        pass
+
+                # Tạo file mới
+                self._create_new_workbook()
         else:
             self.logger.info(f"Creating new Excel file: {self.path}")
             self._create_new_workbook()
-        
+
         return self
 
     def _ensure_workbook(self) -> None:
