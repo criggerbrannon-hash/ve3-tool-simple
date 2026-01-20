@@ -467,10 +467,24 @@ class ProjectDetail(tk.Toplevel):
             # Load Excel steps status
             self._load_excel_steps(wb)
 
+            # Thu lay scenes truoc, neu khong co thi lay tu director_plan
             scenes = wb.get_scenes()
+            if not scenes:
+                director_plans = wb.get_director_plan()
+                if director_plans:
+                    # Convert dict sang Scene-like format
+                    scenes = []
+                    for d in director_plans:
+                        scenes.append({
+                            'scene_id': d.get('scene_id') or d.get('plan_id', 0),
+                            'srt_start': d.get('srt_start', ''),
+                            'srt_end': d.get('srt_end', ''),
+                            'img_prompt': d.get('visual_moment', '') or d.get('img_prompt', ''),
+                            'video_enabled': d.get('video_enabled', False)
+                        })
 
             if not scenes:
-                self.summary_var.set("Excel chưa có scenes!")
+                self.summary_var.set("Excel chưa có scenes (chưa chạy Step 5)!")
                 return
 
             img_folder = project_dir / "img"
@@ -1037,15 +1051,20 @@ class SimpleGUI(tk.Tk):
         tk.Label(ref_header, text="Thumb", width=6, bg='#0f3460', fg='white', font=("Consolas", 9, "bold")).pack(side="left", padx=2)
         tk.Label(ref_header, text="Ten file", width=25, bg='#0f3460', fg='white', font=("Consolas", 9, "bold")).pack(side="left", padx=2)
 
-        # Scrollable list
-        self.ref_canvas = tk.Canvas(ref_frame, bg='#1a1a2e', highlightthickness=0, height=90)
+        # Scrollable list - tang height de hien nhieu anh hon
+        self.ref_canvas = tk.Canvas(ref_frame, bg='#1a1a2e', highlightthickness=0, height=150)
         ref_scrollbar = ttk.Scrollbar(ref_frame, orient="vertical", command=self.ref_canvas.yview)
         self.ref_images_frame = tk.Frame(self.ref_canvas, bg='#1a1a2e')
 
         self.ref_images_frame.bind("<Configure>",
             lambda e: self.ref_canvas.configure(scrollregion=self.ref_canvas.bbox("all")))
-        self.ref_canvas.create_window((0, 0), window=self.ref_images_frame, anchor="nw")
+        self.ref_window_id = self.ref_canvas.create_window((0, 0), window=self.ref_images_frame, anchor="nw")
         self.ref_canvas.configure(yscrollcommand=ref_scrollbar.set)
+
+        # Bind canvas width change to update window width
+        def _on_ref_canvas_configure(e):
+            self.ref_canvas.itemconfig(self.ref_window_id, width=e.width)
+        self.ref_canvas.bind("<Configure>", _on_ref_canvas_configure)
 
         ref_scrollbar.pack(side="right", fill="y")
         self.ref_canvas.pack(fill="both", expand=True)
@@ -1063,7 +1082,7 @@ class SimpleGUI(tk.Tk):
         tk.Label(header_row, text="ID", width=4, bg='#0f3460', fg='white', font=("Consolas", 10, "bold")).pack(side="left", padx=2)
         tk.Label(header_row, text="Thumb", width=6, bg='#0f3460', fg='white', font=("Consolas", 10, "bold")).pack(side="left", padx=2)
         tk.Label(header_row, text="SRT Time", width=18, bg='#0f3460', fg='white', font=("Consolas", 10, "bold")).pack(side="left", padx=2)
-        tk.Label(header_row, text="Prompt", width=25, bg='#0f3460', fg='white', font=("Consolas", 10, "bold")).pack(side="left", padx=2)
+        tk.Label(header_row, text="Prompt", width=45, bg='#0f3460', fg='white', font=("Consolas", 10, "bold")).pack(side="left", padx=2)
         tk.Label(header_row, text="Img", width=5, bg='#0f3460', fg='white', font=("Consolas", 10, "bold")).pack(side="left", padx=2)
         tk.Label(header_row, text="Vid", width=5, bg='#0f3460', fg='white', font=("Consolas", 10, "bold")).pack(side="left", padx=2)
 
@@ -1074,8 +1093,13 @@ class SimpleGUI(tk.Tk):
 
         self.scenes_list_frame.bind("<Configure>",
             lambda e: self.scene_canvas.configure(scrollregion=self.scene_canvas.bbox("all")))
-        self.scene_canvas.create_window((0, 0), window=self.scenes_list_frame, anchor="nw")
+        self.scene_window_id = self.scene_canvas.create_window((0, 0), window=self.scenes_list_frame, anchor="nw")
         self.scene_canvas.configure(yscrollcommand=scene_scrollbar.set)
+
+        # Bind canvas width change to update window width
+        def _on_scene_canvas_configure(e):
+            self.scene_canvas.itemconfig(self.scene_window_id, width=e.width)
+        self.scene_canvas.bind("<Configure>", _on_scene_canvas_configure)
 
         scene_scrollbar.pack(side="right", fill="y")
         self.scene_canvas.pack(fill="both", expand=True)
@@ -1182,9 +1206,93 @@ class SimpleGUI(tk.Tk):
 
         try:
             from modules.excel_manager import PromptWorkbook
-            wb = PromptWorkbook(str(excel_path))
-            wb.load_or_create()
-            scenes = wb.get_scenes()
+            from openpyxl import load_workbook as openpyxl_load
+
+            # Doc truc tiep bang openpyxl de debug
+            raw_wb = openpyxl_load(str(excel_path))
+            sheet_names = raw_wb.sheetnames
+            print(f"[DEBUG] Excel sheets: {sheet_names}")
+
+            # Tim sheet scenes (co the la 'scenes' hoac 'Scenes')
+            scenes_sheet_name = None
+            for name in sheet_names:
+                if name.lower() == 'scenes':
+                    scenes_sheet_name = name
+                    break
+
+            scenes = []
+
+            if scenes_sheet_name:
+                ws = raw_wb[scenes_sheet_name]
+                print(f"[DEBUG] Found scenes sheet: '{scenes_sheet_name}', max_row={ws.max_row}")
+
+                # Doc header de biet column order
+                headers = [cell.value for cell in ws[1]]
+                print(f"[DEBUG] Headers: {headers}")
+
+                # Doc data
+                for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                    if row[0] is None:
+                        continue
+
+                    # Tao dict tu header va row
+                    row_data = dict(zip(headers, row))
+
+                    class SceneLike:
+                        def __init__(self, data):
+                            self.scene_id = data.get('scene_id', 0)
+                            self.srt_start = data.get('srt_start', '')
+                            self.srt_end = data.get('srt_end', '')
+                            self.img_prompt = data.get('img_prompt', '') or data.get('visual_moment', '')
+                            self.video_enabled = data.get('video_enabled', False)
+
+                    scenes.append(SceneLike(row_data))
+
+                print(f"[DEBUG] Loaded {len(scenes)} scenes from sheet")
+
+            # Neu khong co scenes sheet hoac khong co data, thu director_plan
+            if not scenes:
+                director_sheet_name = None
+                for name in sheet_names:
+                    if 'director' in name.lower():
+                        director_sheet_name = name
+                        break
+
+                if director_sheet_name:
+                    ws = raw_wb[director_sheet_name]
+                    print(f"[DEBUG] Found director sheet: '{director_sheet_name}', max_row={ws.max_row}")
+                    headers = [cell.value for cell in ws[1]]
+                    print(f"[DEBUG] Director headers: {headers}")
+
+                    for row in ws.iter_rows(min_row=2, values_only=True):
+                        if row[0] is None:
+                            continue
+                        row_data = dict(zip(headers, row))
+
+                        class SceneLike:
+                            def __init__(self, data):
+                                self.scene_id = data.get('scene_id') or data.get('plan_id', 0)
+                                self.srt_start = data.get('srt_start', '')
+                                self.srt_end = data.get('srt_end', '')
+                                self.img_prompt = data.get('visual_moment', '') or data.get('img_prompt', '')
+                                self.video_enabled = data.get('video_enabled', False)
+
+                        scenes.append(SceneLike(row_data))
+
+                    print(f"[DEBUG] Loaded {len(scenes)} from director_plan")
+
+            raw_wb.close()
+
+            # Neu van khong co scenes
+            if not scenes:
+                tk.Label(self.scenes_list_frame, text=f"Khong tim thay scenes trong Excel\nSheets: {sheet_names}",
+                         bg='#1a1a2e', fg='#ffd93d', font=("Consolas", 10)).pack(pady=20)
+                return
+
+            # Hien thi so luong scenes tim thay
+            info_label = tk.Label(self.scenes_list_frame, text=f"Tim thay {len(scenes)} scenes",
+                                  bg='#1a1a2e', fg='#00ff88', font=("Consolas", 10, "bold"))
+            info_label.pack(pady=3)
 
             img_dir = project_dir / "img"
             vid_dir = project_dir / "vid"
@@ -1237,10 +1345,10 @@ class SimpleGUI(tk.Tk):
                 tk.Label(row, text=srt_text, width=18, bg=bg, fg='#ffd93d',
                          font=("Consolas", 9)).pack(side="left", padx=3)
 
-                # Prompt (truncated) - font to hon
+                # Prompt (truncated) - font to hon va width lon hon
                 prompt_text = scene.img_prompt or ""
-                prompt = prompt_text[:28] + "..." if len(prompt_text) > 28 else prompt_text or "--"
-                tk.Label(row, text=prompt, width=25, bg=bg, fg='#c8d6e5',
+                prompt = prompt_text[:50] + "..." if len(prompt_text) > 50 else prompt_text or "--"
+                tk.Label(row, text=prompt, width=45, bg=bg, fg='#c8d6e5',
                          font=("Consolas", 9), anchor="w").pack(side="left", padx=3)
 
                 # Image status
